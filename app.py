@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 다크 테마 완성형 스타일 (테이블 및 상자 포함)
+# 다크 테마 완벽 적용 CSS
 st.markdown("""
 <style>
     /* 전체 배경 */
@@ -54,7 +54,7 @@ st.markdown("""
         border-radius: 8px !important;
     }
     
-    /* 데이터프레임(표) 흰색 배경 제거 및 다크 스타일 연동 */
+    /* 데이터프레임(표) 다크 스타일 적용 */
     [data-testid="stDataFrame"] {
         background-color: #1b2e4b !important;
         border-radius: 8px !important;
@@ -107,7 +107,7 @@ def load_data():
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 배팅 분석 대시보드")
-st.caption("눈이 편안한 올 다크(All Dark) 모드가 적용된 배팅 데이터 분석 대시보드입니다.")
+st.caption("유럽 4대 리그 전용 올 다크(All Dark) 배팅 분석 대시보드입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -169,9 +169,15 @@ with tab1:
             h2h_disp = h2h.copy()
             h2h_disp['Score'] = h2h_disp['FTHG'].astype(int).astype(str) + " : " + h2h_disp['FTAG'].astype(int).astype(str)
             h2h_disp['Date'] = h2h_disp['Date'].dt.strftime('%Y-%m-%d')
-            st.dataframe(h2h_disp[['Date', 'Season', 'HomeTeam', 'Score', 'AwayTeam', 'Referee']].rename(
-                columns={'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀', 'Referee':'주심'}
-            ), use_container_width=True, hide_index=True)
+            
+            # Referee 컬럼 존재 여부에 따른 동적 컬럼 설정
+            disp_cols = ['Date', 'Season', 'HomeTeam', 'Score', 'AwayTeam']
+            renames = {'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀'}
+            if 'Referee' in h2h_disp.columns:
+                disp_cols.append('Referee')
+                renames['Referee'] = '주심'
+                
+            st.dataframe(h2h_disp[disp_cols].rename(columns=renames), use_container_width=True, hide_index=True)
     else:
         st.info("두 팀 간의 맞대결 기록이 없습니다.")
         
@@ -300,43 +306,46 @@ with tab3:
     
     if 'Referee' in df.columns:
         available_refs = sorted(df['Referee'].dropna().unique().tolist())
-        default_ref = h2h.iloc[0]['Referee'] if not h2h.empty and pd.notna(h2h.iloc[0]['Referee']) else available_refs[0]
+        default_ref = h2h.iloc[0]['Referee'] if not h2h.empty and 'Referee' in h2h.columns and pd.notna(h2h.iloc[0]['Referee']) else (available_refs[0] if available_refs else None)
         
-        selected_ref = st.selectbox("조회할 주심을 선택하세요:", available_refs, index=available_refs.index(default_ref) if default_ref in available_refs else 0)
-        
-        ref_matches = df[df['Referee'] == selected_ref].copy()
-        st.markdown(f"##### 👨‍⚖️ **{selected_ref}** 주심 통계 (`총 {len(ref_matches)}경기 관장`)")
-        
-        if not ref_matches.empty:
-            ref_matches['TotalCards'] = ref_matches['HY'].fillna(0) + ref_matches['AY'].fillna(0) + (ref_matches['HR'].fillna(0) + ref_matches['AR'].fillna(0))*2
-            ref_matches['TotalFouls'] = ref_matches['HF'].fillna(0) + ref_matches['AF'].fillna(0)
+        if available_refs:
+            selected_ref = st.selectbox("조회할 주심을 선택하세요:", available_refs, index=available_refs.index(default_ref) if default_ref in available_refs else 0)
             
-            avg_cards = ref_matches['TotalCards'].mean()
-            avg_fouls = ref_matches['TotalFouls'].mean()
-            home_card_ratio = (ref_matches['HY'].sum() / (ref_matches['HY'].sum() + ref_matches['AY'].sum() + 1e-5)) * 100
+            ref_matches = df[df['Referee'] == selected_ref].copy()
+            st.markdown(f"##### 👨‍⚖️ **{selected_ref}** 주심 통계 (`총 {len(ref_matches)}경기 관장`)")
             
-            rc1, rc2, rc3 = st.columns(3)
-            rc1.metric("경기당 평균 카드 수", f"{avg_cards:.2f} 개")
-            rc2.metric("경기당 평균 파울 수", f"{avg_fouls:.1f} 회")
-            rc3.metric("홈팀 경고 부여 비율", f"{home_card_ratio:.1f}%", "50%보다 높으면 홈팀에 엄격")
-            
-            st.markdown("---")
-            st.markdown(f"##### 🔍 **{selected_ref} 주심이 진행한 {home_team} 및 {away_team} 경기 기록**")
-            
-            team_ref_matches = ref_matches[(ref_matches['HomeTeam'].isin([home_team, away_team])) | (ref_matches['AwayTeam'].isin([home_team, away_team]))]
-            
-            if not team_ref_matches.empty:
-                team_ref_matches['Score'] = team_ref_matches['FTHG'].astype(int).astype(str) + " : " + team_ref_matches['FTAG'].astype(int).astype(str)
-                team_ref_matches['Cards'] = "홈 " + team_ref_matches['HY'].fillna(0).astype(int).astype(str) + " / 원정 " + team_ref_matches['AY'].fillna(0).astype(int).astype(str)
-                team_ref_matches['DateStr'] = team_ref_matches['Date'].dt.strftime('%Y-%m-%d')
+            if not ref_matches.empty:
+                ref_matches['TotalCards'] = ref_matches['HY'].fillna(0) + ref_matches['AY'].fillna(0) + (ref_matches['HR'].fillna(0) + ref_matches['AR'].fillna(0))*2
+                ref_matches['TotalFouls'] = ref_matches['HF'].fillna(0) + ref_matches['AF'].fillna(0)
                 
-                st.dataframe(team_ref_matches[['DateStr', 'HomeTeam', 'Score', 'AwayTeam', 'Cards', 'HF', 'AF']].rename(
-                    columns={'DateStr':'날짜', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀', 'Cards':'옐로카드(홈/원정)', 'HF':'홈파울', 'AF':'원정파울'}
-                ), use_container_width=True, hide_index=True)
-            else:
-                st.info(f"{selected_ref} 주심이 {home_team} 또는 {away_team}의 경기를 맡은 최근 기록이 없습니다.")
+                avg_cards = ref_matches['TotalCards'].mean()
+                avg_fouls = ref_matches['TotalFouls'].mean()
+                home_card_ratio = (ref_matches['HY'].sum() / (ref_matches['HY'].sum() + ref_matches['AY'].sum() + 1e-5)) * 100
+                
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.metric("경기당 평균 카드 수", f"{avg_cards:.2f} 개")
+                rc2.metric("경기당 평균 파울 수", f"{avg_fouls:.1f} 회")
+                rc3.metric("홈팀 경고 부여 비율", f"{home_card_ratio:.1f}%", "50%보다 높으면 홈팀에 엄격")
+                
+                st.markdown("---")
+                st.markdown(f"##### 🔍 **{selected_ref} 주심이 진행한 {home_team} 및 {away_team} 경기 기록**")
+                
+                team_ref_matches = ref_matches[(ref_matches['HomeTeam'].isin([home_team, away_team])) | (ref_matches['AwayTeam'].isin([home_team, away_team]))]
+                
+                if not team_ref_matches.empty:
+                    team_ref_matches['Score'] = team_ref_matches['FTHG'].astype(int).astype(str) + " : " + team_ref_matches['FTAG'].astype(int).astype(str)
+                    team_ref_matches['Cards'] = "홈 " + team_ref_matches['HY'].fillna(0).astype(int).astype(str) + " / 원정 " + team_ref_matches['AY'].fillna(0).astype(int).astype(str)
+                    team_ref_matches['DateStr'] = team_ref_matches['Date'].dt.strftime('%Y-%m-%d')
+                    
+                    st.dataframe(team_ref_matches[['DateStr', 'HomeTeam', 'Score', 'AwayTeam', 'Cards', 'HF', 'AF']].rename(
+                        columns={'DateStr':'날짜', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀', 'Cards':'옐로카드(홈/원정)', 'HF':'홈파울', 'AF':'원정파울'}
+                    ), use_container_width=True, hide_index=True)
+                else:
+                    st.info(f"{selected_ref} 주심이 {home_team} 또는 {away_team}의 경기를 맡은 최근 기록이 없습니다.")
+        else:
+            st.info("선택 가능한 주심 목록이 없습니다.")
     else:
-        st.info("심판 데이터가 제공되지 않습니다.")
+        st.info("💡 라리가, 세리에A, 분데스리가 데이터에는 주심(Referee) 정보가 포함되어 있지 않습니다. (EPL 전용 기능)")
 
 # ------------------------------------------
 # Page 4: 홈 vs 원정 직관적 지표 비교
