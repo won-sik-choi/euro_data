@@ -133,7 +133,7 @@ st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "⚔️ Page 1: 맞대결 전적 & 전/후반 득점",
-    "💰 Page 2: 초기 vs 마감 배당 수율 분석",
+    "💰 Page 2: 초기 vs 마감 배당 세부 분석",
     "🟨 Page 3: 매치 심판 성향",
     "📈 Page 4: 홈 vs 원정 유효슈팅 & 지표"
 ])
@@ -165,7 +165,6 @@ with tab1:
         m5.metric("양팀 득점 (BTTS)", f"{btts}경기", f"{(btts/len(h2h))*100:.0f}%")
         
         st.markdown("---")
-        # 전반전 / 후반전 득점 세부 비교
         if 'HTHG' in h2h.columns and 'HTAG' in h2h.columns:
             st.markdown("##### ⏱️ **맞대결 전반전 vs 후반전 득점 분포**")
             h2h['HT_Goals'] = h2h['HTHG'] + h2h['HTAG']
@@ -202,7 +201,6 @@ with tab1:
         
     st.markdown("---")
     
-    # 팀별 최근 5경기 흐름 (Form)
     st.markdown("##### 📈 **양 팀 최근 5경기 흐름 (Form)**")
     col_f1, col_f2 = st.columns(2)
     
@@ -243,11 +241,11 @@ with tab1:
             ), use_container_width=True, hide_index=True)
 
 # ------------------------------------------
-# Page 2: 초기 vs 마감 배당 변동 및 수율 분석
+# Page 2: 초기 vs 마감 배당 세부 분석 (수정완료)
 # ------------------------------------------
 with tab2:
-    st.subheader(f"💰 초기 배당 vs 마감 배당(Closing Odds) 비교 & 수율 분석")
-    st.caption("초기 배당과 마감 배당을 비교하여 자금 쏠림 현상 및 배당 변동 시 적중률을 분석합니다.")
+    st.subheader(f"💰 초기 배당 vs 마감 배당(Closing Odds) 세부 분석")
+    st.caption("이번 경기의 실제 배당을 입력하여 과거 유사 배당의 적중률을 분석하고, 초기 배당과 마감 배당(홈/무/원정) 변동을 한눈에 비교합니다.")
     
     col_in1, col_in2, col_in3, col_in4 = st.columns(4)
     with col_in1:
@@ -267,7 +265,7 @@ with tab2:
             (df['B365H'] <= input_h_odds + tolerance)
         ].copy()
         
-        st.markdown(f"#### 📊 입력 배당 [ **{input_h_odds:.2f}** (±{tolerance:.2f}) ] 과거 적중 및 배당 변동 성적")
+        st.markdown(f"#### 📊 입력 배당 [ 홈 **{input_h_odds:.2f}** / 무 **{input_d_odds:.2f}** / 원정 **{input_a_odds:.2f}** (오차 ±{tolerance:.2f}) ] 적중 성적")
         
         if not similar_league_games.empty:
             tot_cnt = len(similar_league_games)
@@ -275,7 +273,7 @@ with tab2:
             draw = len(similar_league_games[similar_league_games['FTR'] == 'D'])
             a_win = len(similar_league_games[similar_league_games['FTR'] == 'A'])
             
-            has_close = ('B365CH' in similar_league_games.columns) and ('B365CA' in similar_league_games.columns)
+            has_close = ('B365CH' in similar_league_games.columns) and ('B365CD' in similar_league_games.columns) and ('B365CA' in similar_league_games.columns)
             if has_close:
                 drop_h = similar_league_games[similar_league_games['B365CH'] < similar_league_games['B365H']]
                 drop_h_win = len(drop_h[drop_h['FTR'] == 'H']) if len(drop_h) > 0 else 0
@@ -287,7 +285,7 @@ with tab2:
             mc3.metric("원정 승리 발생률", f"{(a_win/tot_cnt)*100:.1f}%", f"{a_win} / {tot_cnt} 경기")
             
             if has_close:
-                mc4.metric("마감 시 홈배당 하락 시 적중률", f"{drop_win_rate:.1f}%", f"{len(drop_h)}경기 중 하락")
+                mc4.metric("마감 시 홈배당 하락 시 승률", f"{drop_win_rate:.1f}%", f"{len(drop_h)}경기 중 하락")
             else:
                 similar_league_games['TotalGoals'] = similar_league_games['FTHG'] + similar_league_games['FTAG']
                 o25 = len(similar_league_games[similar_league_games['TotalGoals'] > 2.5])
@@ -295,20 +293,32 @@ with tab2:
                 
             st.markdown("---")
             
-            with st.expander("📋 과거 유사 배당 경기 (초기 배당 vs 홈/원정 마감 배당 상세) 목록"):
-                similar_league_games['Score'] = similar_league_games['FTHG'].astype(int).astype(str) + " : " + similar_league_games['FTAG'].astype(int).astype(str)
-                similar_league_games['DateStr'] = similar_league_games['Date'].dt.strftime('%Y-%m-%d')
+            st.markdown("##### 📋 **과거 유사 배당 경기 (초기 배당 vs 마감 배당 전체 목록)**")
+            similar_league_games['Score'] = similar_league_games['FTHG'].astype(int).astype(str) + " : " + similar_league_games['FTAG'].astype(int).astype(str)
+            similar_league_games['DateStr'] = similar_league_games['Date'].dt.strftime('%Y-%m-%d')
+            
+            # 초기 배당 및 마감 배당 컬럼 세팅 (홈, 무, 원정 전체 포함)
+            show_cols = ['DateStr', 'HomeTeam', 'AwayTeam', 'B365H', 'B365D', 'B365A']
+            renames = {
+                'DateStr': '날짜', 'HomeTeam': '홈팀', 'AwayTeam': '원정팀',
+                'B365H': '초기 [홈]', 'B365D': '초기 [무]', 'B365A': '초기 [원정]'
+            }
+            
+            if has_close:
+                show_cols.extend(['B365CH', 'B365CD', 'B365CA'])
+                renames['B365CH'] = '마감 [홈]'
+                renames['B365CD'] = '마감 [무]'
+                renames['B365CA'] = '마감 [원정]'
                 
-                show_cols = ['DateStr', 'HomeTeam', 'AwayTeam', 'B365H', 'B365A', 'Score', 'FTR']
-                renames = {'DateStr':'날짜', 'HomeTeam':'홈팀', 'AwayTeam':'원정팀', 'B365H':'초기홈배당', 'B365A':'초기원정배당', 'Score':'스코어', 'FTR':'결과'}
-                
-                if has_close:
-                    show_cols.insert(4, 'B365CH')
-                    show_cols.insert(6, 'B365CA')
-                    renames['B365CH'] = '마감홈배당'
-                    renames['B365CA'] = '마감원정배당'
-                    
-                st.dataframe(similar_league_games[show_cols].rename(columns=renames), use_container_width=True, hide_index=True)
+            show_cols.extend(['Score', 'FTR'])
+            renames['Score'] = '스코어'
+            renames['FTR'] = '결과'
+            
+            st.dataframe(
+                similar_league_games[show_cols].rename(columns=renames),
+                use_container_width=True,
+                hide_index=True
+            )
         else:
             st.warning("입력하신 배당 범위에 해당하는 유사 경기 데이터가 없습니다.")
     else:
