@@ -108,7 +108,7 @@ def load_data():
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
-st.caption("AI 포아송 확률 계산기 및 전/후반 득점, 마감 배당까지 정밀 분석이 가능한 종합 시스템입니다.")
+st.caption("AI 기대득점(xG) 및 공격/수비력 지수, 초기/마감 배당까지 정밀 분석이 가능한 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -131,7 +131,7 @@ st.sidebar.markdown("---")
 st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 
 # ==========================================
-# 4. 포아송 분포 기반 AI 승률 및 언오버 계산 함수
+# 4. 포아송 분포 기반 AI 기대득점 및 공격/수비력 지수 계산
 # ==========================================
 def calculate_poisson_probabilities(df_league, home_team, away_team):
     avg_home_goals = df_league['FTHG'].mean()
@@ -143,14 +143,14 @@ def calculate_poisson_probabilities(df_league, home_team, away_team):
     if home_matches.empty or away_matches.empty:
         return None
     
-    home_attack = home_matches['FTHG'].mean() / avg_home_goals
-    home_defense = home_matches['FTAG'].mean() / avg_away_goals
+    home_attack = home_matches['FTHG'].mean() / (avg_home_goals + 1e-5)
+    home_defense = home_matches['FTAG'].mean() / (avg_away_goals + 1e-5)
     
-    away_attack = away_matches['FTAG'].mean() / avg_away_goals
-    away_defense = away_matches['FTHG'].mean() / avg_home_goals
+    away_attack = away_matches['FTAG'].mean() / (avg_away_goals + 1e-5)
+    away_defense = away_matches['FTHG'].mean() / (avg_home_goals + 1e-5)
     
     expected_home_goals = home_attack * away_defense * avg_home_goals
-    expected_away_goals = away_attack * home_defense * avg_away_goals
+    expected_away_goals = away_attack * home_defense * avg_home_goals
     
     max_goals = 6
     p_home = [poisson.pmf(i, expected_home_goals) for i in range(max_goals)]
@@ -169,6 +169,10 @@ def calculate_poisson_probabilities(df_league, home_team, away_team):
                 prob_over25 += matrix[i, j]
                 
     return {
+        'h_attack': home_attack,
+        'h_defense': home_defense,
+        'a_attack': away_attack,
+        'a_defense': away_defense,
         'exp_h_goals': expected_home_goals,
         'exp_a_goals': expected_away_goals,
         'home_win': prob_home_win * 100,
@@ -181,18 +185,30 @@ def calculate_poisson_probabilities(df_league, home_team, away_team):
         'fair_away_odds': 1 / (prob_away_win + 1e-5)
     }
 
-# AI 확률 계산 수행
 ai_result = calculate_poisson_probabilities(df, home_team, away_team)
 
 if ai_result:
-    st.markdown(f"### 🤖 **AI 데이터 예측 결과 ({home_team} vs {away_team})**")
+    st.markdown(f"### 🤖 **AI 전력 정밀 시뮬레이션 및 승률 예측 ({home_team} vs {away_team})**")
     
+    # 1행: 공격력/수비력 지수 및 예상 기대득점(xG)
+    st.markdown("##### 📊 **1. 팀별 홈/원정 공격·수비력 지수 & 예상 기대득점 (xG)**")
+    p1, p2, p3, p4, p5 = st.columns(5)
+    p1.metric(f"🏠 {home_team} 홈 공격력", f"{ai_result['h_attack']:.2f}", "1.0 이상이면 리그 평균 이상")
+    p2.metric(f"🏠 {home_team} 홈 수비력", f"{ai_result['h_defense']:.2f}", "1.0 이하일수록 실점 적음")
+    p3.metric(f"🚀 {away_team} 원정 공격력", f"{ai_result['a_attack']:.2f}", "1.0 이상이면 리그 평균 이상")
+    p4.metric(f"🚀 {away_team} 원정 수비력", f"{ai_result['a_defense']:.2f}", "1.0 이하일수록 실점 적음")
+    p5.metric("⚽ AI 예상 스코어 (xG)", f"{ai_result['exp_h_goals']:.2f} : {ai_result['exp_a_goals']:.2f}", f"총 {ai_result['exp_h_goals']+ai_result['exp_a_goals']:.2f}골")
+    
+    st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+    
+    # 2행: 승무패 확률 및 2.5 오버/언더 확률
+    st.markdown("##### 🎯 **2. AI 확률 계산 및 적정 배당 (True Odds)**")
     c_ai1, c_ai2, c_ai3, c_ai4, c_ai5 = st.columns(5)
-    c_ai1.metric(f"🏠 {home_team} 승리 확률", f"{ai_result['home_win']:.1f}%", f"적정배당 {ai_result['fair_home_odds']:.2f}")
-    c_ai2.metric("🤝 무승부 확률", f"{ai_result['draw']:.1f}%", f"적정배당 {ai_result['fair_draw_odds']:.2f}")
-    c_ai3.metric(f"🚀 {away_team} 승리 확률", f"{ai_result['away_win']:.1f}%", f"적정배당 {ai_result['fair_away_odds']:.2f}")
-    c_ai4.metric("🔥 2.5 오버 확률", f"{ai_result['over25']:.1f}%", f"예상득점 {ai_result['exp_h_goals']:.2f} : {ai_result['exp_a_goals']:.2f}")
-    c_ai5.metric("🛡️ 2.5 언더 확률", f"{ai_result['under25']:.1f}%", "포아송 수치 기준")
+    c_ai1.metric(f"🏠 {home_team} 승리 확률", f"{ai_result['home_win']:.1f}%", f"적정 {ai_result['fair_home_odds']:.2f}")
+    c_ai2.metric("🤝 무승부 확률", f"{ai_result['draw']:.1f}%", f"적정 {ai_result['fair_draw_odds']:.2f}")
+    c_ai3.metric(f"🚀 {away_team} 승리 확률", f"{ai_result['away_win']:.1f}%", f"적정 {ai_result['fair_away_odds']:.2f}")
+    c_ai4.metric("🔥 2.5 오버 확률", f"{ai_result['over25']:.1f}%", f"적정 {100/(ai_result['over25']+1e-5):.2f}")
+    c_ai5.metric("🛡️ 2.5 언더 확률", f"{ai_result['under25']:.1f}%", f"적정 {100/(ai_result['under25']+1e-5):.2f}")
 
 st.markdown("---")
 
