@@ -14,7 +14,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# 다크 테마 완벽 적용 CSS
 st.markdown("""
 <style>
     /* 전체 배경 */
@@ -106,8 +105,8 @@ def load_data():
 
 league_dict = load_data()
 
-st.title("⚽ 선택 매치업 배팅 분석 대시보드")
-st.caption("유럽 4대 리그 전용 올 다크(All Dark) 배팅 분석 대시보드입니다.")
+st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
+st.caption("전/후반 득점, 초기/마감 배당, 유효 슈팅 지표까지 정밀 분석이 가능한 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -133,17 +132,17 @@ st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 # 4. 4개 페이지 구성
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs([
-    "⚔️ Page 1: 맞대결(H2H) & 최근 흐름",
-    "💰 Page 2: 배당 직접 입력 & 수율 분석",
+    "⚔️ Page 1: 맞대결 전적 & 전/후반 득점",
+    "💰 Page 2: 초기 vs 마감 배당 수율 분석",
     "🟨 Page 3: 매치 심판 성향",
-    "📈 Page 4: 홈 vs 원정 직관적 지표 비교"
+    "📈 Page 4: 홈 vs 원정 유효슈팅 & 지표"
 ])
 
 # ------------------------------------------
-# Page 1: 맞대결(H2H) & 최근 흐름
+# Page 1: 맞대결(H2H) & 전/후반 득점 분석
 # ------------------------------------------
 with tab1:
-    st.subheader(f"⚔️ {home_team} vs {away_team} 맞대결 전적 & 최근 흐름")
+    st.subheader(f"⚔️ {home_team} vs {away_team} 맞대결 전적 & 전/후반 득점 흐름")
     
     h2h = df[((df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)) | 
              ((df['HomeTeam'] == away_team) & (df['AwayTeam'] == home_team))].sort_values(by='Date', ascending=False)
@@ -165,14 +164,34 @@ with tab1:
         m4.metric("2.5 오버 비율", f"{over25}경기", f"{(over25/len(h2h))*100:.0f}%")
         m5.metric("양팀 득점 (BTTS)", f"{btts}경기", f"{(btts/len(h2h))*100:.0f}%")
         
-        with st.expander("📄 최근 맞대결 경기 결과 목록 보기"):
+        st.markdown("---")
+        # 추가: 전반전 / 후반전 득점 세부 비교
+        if 'HTHG' in h2h.columns and 'HTAG' in h2h.columns:
+            st.markdown("##### ⏱️ **맞대결 전반전 vs 후반전 득점 분포**")
+            h2h['HT_Goals'] = h2h['HTHG'] + h2h['HTAG']
+            h2h['2H_Goals'] = h2h['TotalGoals'] - h2h['HT_Goals']
+            
+            avg_ht = h2h['HT_Goals'].mean()
+            avg_2h = h2h['2H_Goals'].mean()
+            ht_over05 = (len(h2h[h2h['HT_Goals'] > 0.5]) / len(h2h)) * 100
+            
+            fc1, fc2, fc3 = st.columns(3)
+            fc1.metric("전반전 평균 득점", f"{avg_ht:.2f} 골")
+            fc2.metric("후반전 평균 득점", f"{avg_2h:.2f} 골")
+            fc3.metric("전반전 0.5 오버 확률", f"{ht_over05:.1f}%")
+        
+        with st.expander("📄 최근 맞대결 경기 스코어 (전반 스코어 포함) 목록 보기"):
             h2h_disp = h2h.copy()
             h2h_disp['Score'] = h2h_disp['FTHG'].astype(int).astype(str) + " : " + h2h_disp['FTAG'].astype(int).astype(str)
+            if 'HTHG' in h2h_disp.columns:
+                h2h_disp['HT_Score'] = h2h_disp['HTHG'].fillna(0).astype(int).astype(str) + " : " + h2h_disp['HTAG'].fillna(0).astype(int).astype(str)
+            else:
+                h2h_disp['HT_Score'] = "-"
+            
             h2h_disp['Date'] = h2h_disp['Date'].dt.strftime('%Y-%m-%d')
             
-            # Referee 컬럼 존재 여부에 따른 동적 컬럼 설정
-            disp_cols = ['Date', 'Season', 'HomeTeam', 'Score', 'AwayTeam']
-            renames = {'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀'}
+            disp_cols = ['Date', 'Season', 'HomeTeam', 'HT_Score', 'Score', 'AwayTeam']
+            renames = {'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'HT_Score':'전반스코어', 'Score':'최종스코어', 'AwayTeam':'원정팀'}
             if 'Referee' in h2h_disp.columns:
                 disp_cols.append('Referee')
                 renames['Referee'] = '주심'
@@ -180,54 +199,13 @@ with tab1:
             st.dataframe(h2h_disp[disp_cols].rename(columns=renames), use_container_width=True, hide_index=True)
     else:
         st.info("두 팀 간의 맞대결 기록이 없습니다.")
-        
-    st.markdown("---")
-    
-    st.markdown("##### 📈 **양 팀 최근 5경기 흐름 (Form)**")
-    col_f1, col_f2 = st.columns(2)
-    
-    with col_f1:
-        st.markdown(f"🏠 **{home_team} 최근 5경기 (홈/원정 포함)**")
-        h_recent = df[(df['HomeTeam'] == home_team) | (df['AwayTeam'] == home_team)].head(5).copy()
-        
-        if not h_recent.empty:
-            def get_res(row, team):
-                if row['HomeTeam'] == team:
-                    return '승' if row['FTR'] == 'H' else ('무' if row['FTR'] == 'D' else '패')
-                else:
-                    return '승' if row['FTR'] == 'A' else ('무' if row['FTR'] == 'D' else '패')
-            
-            h_recent['Result'] = h_recent.apply(lambda r: get_res(r, home_team), axis=1)
-            h_recent['Score'] = h_recent['FTHG'].astype(int).astype(str) + " : " + h_recent['FTAG'].astype(int).astype(str)
-            h_recent['DateStr'] = h_recent['Date'].dt.strftime('%Y-%m-%d')
-            
-            res_str = " ".join([f"[{r}]" for r in h_recent['Result'].tolist()])
-            st.markdown(f"**전적:** {res_str}")
-            st.dataframe(h_recent[['DateStr', 'HomeTeam', 'Score', 'AwayTeam', 'Result']].rename(
-                columns={'DateStr':'날짜', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀', 'Result':'결과'}
-            ), use_container_width=True, hide_index=True)
-            
-    with col_f2:
-        st.markdown(f"🚀 **{away_team} 최근 5경기 (홈/원정 포함)**")
-        a_recent = df[(df['HomeTeam'] == away_team) | (df['AwayTeam'] == away_team)].head(5).copy()
-        
-        if not a_recent.empty:
-            a_recent['Result'] = a_recent.apply(lambda r: get_res(r, away_team), axis=1)
-            a_recent['Score'] = a_recent['FTHG'].astype(int).astype(str) + " : " + a_recent['FTAG'].astype(int).astype(str)
-            a_recent['DateStr'] = a_recent['Date'].dt.strftime('%Y-%m-%d')
-            
-            res_str_a = " ".join([f"[{r}]" for r in a_recent['Result'].tolist()])
-            st.markdown(f"**전적:** {res_str_a}")
-            st.dataframe(a_recent[['DateStr', 'HomeTeam', 'Score', 'AwayTeam', 'Result']].rename(
-                columns={'DateStr':'날짜', 'HomeTeam':'홈팀', 'Score':'스코어', 'AwayTeam':'원정팀', 'Result':'결과'}
-            ), use_container_width=True, hide_index=True)
 
 # ------------------------------------------
-# Page 2: 배당 직접 입력 & 수율 분석
+# Page 2: 초기 vs 마감 배당 변동 및 수율 분석
 # ------------------------------------------
 with tab2:
-    st.subheader(f"💰 현재 경기 배당 직접 입력 및 과거 유사 배당 적중 분석")
-    st.caption("이번 경기의 실제 배당을 아래에 입력해 보세요. 과거 리그 데이터에서 해당 배당을 받았을 때의 실제 적중률을 즉시 계산합니다.")
+    st.subheader(f"💰 초기 배당 vs 마감 배당(Closing Odds) 비교 & 수율 분석")
+    st.caption("초기 배당과 마감 배당을 비교하여 자금 쏠림 현상 및 배당 변동 시 적중률을 분석합니다.")
     
     col_in1, col_in2, col_in3, col_in4 = st.columns(4)
     with col_in1:
@@ -247,13 +225,7 @@ with tab2:
             (df['B365H'] <= input_h_odds + tolerance)
         ].copy()
         
-        similar_home_team_games = df[
-            (df['HomeTeam'] == home_team) & 
-            (df['B365H'] >= input_h_odds - tolerance) & 
-            (df['B365H'] <= input_h_odds + tolerance)
-        ].copy()
-        
-        st.markdown(f"#### 📊 입력 배당 [ **{input_h_odds:.2f}** (±{tolerance:.2f}) ] 과거 적중 분석 결과")
+        st.markdown(f"#### 📊 입력 배당 [ **{input_h_odds:.2f}** (±{tolerance:.2f}) ] 과거 적중 및 배당 변동 성적")
         
         if not similar_league_games.empty:
             tot_cnt = len(similar_league_games)
@@ -261,40 +233,42 @@ with tab2:
             draw = len(similar_league_games[similar_league_games['FTR'] == 'D'])
             a_win = len(similar_league_games[similar_league_games['FTR'] == 'A'])
             
-            similar_league_games['TotalGoals'] = similar_league_games['FTHG'] + similar_league_games['FTAG']
-            o25 = len(similar_league_games[similar_league_games['TotalGoals'] > 2.5])
+            # 마감 배당 변동 체크 (B365CH 가 있는 경우)
+            has_close = 'B365CH' in similar_league_games.columns
+            if has_close:
+                # 마감 시 홈 배당이 떨어진 경기 (돈이 쏠린 경기)
+                drop_h = similar_league_games[similar_league_games['B365CH'] < similar_league_games['B365H']]
+                drop_h_win = len(drop_h[drop_h['FTR'] == 'H']) if len(drop_h) > 0 else 0
+                drop_win_rate = (drop_h_win / len(drop_h) * 100) if len(drop_h) > 0 else 0
             
-            st.markdown(f"##### 1️⃣ **{selected_league} 전체** 유사 배당 성적 (`총 {tot_cnt}경기`)")
             mc1, mc2, mc3, mc4 = st.columns(4)
             mc1.metric("홈 승리 적중률", f"{(h_win/tot_cnt)*100:.1f}%", f"{h_win} / {tot_cnt} 경기")
             mc2.metric("무승부 발생률", f"{(draw/tot_cnt)*100:.1f}%", f"{draw} / {tot_cnt} 경기")
             mc3.metric("원정 승리 발생률", f"{(a_win/tot_cnt)*100:.1f}%", f"{a_win} / {tot_cnt} 경기")
-            mc4.metric("2.5 골 오버 비율", f"{(o25/tot_cnt)*100:.1f}%", f"{o25} / {tot_cnt} 경기")
             
+            if has_close:
+                mc4.metric("마감 시 홈배당 하락 시 적중률", f"{drop_win_rate:.1f}%", f"{len(drop_h)}경기 중 하락")
+            else:
+                similar_league_games['TotalGoals'] = similar_league_games['FTHG'] + similar_league_games['FTAG']
+                o25 = len(similar_league_games[similar_league_games['TotalGoals'] > 2.5])
+                mc4.metric("2.5 골 오버 비율", f"{(o25/tot_cnt)*100:.1f}%")
+                
             st.markdown("---")
             
-            st.markdown(f"##### 2️⃣ **{home_team}** 이 홈에서 동일 배당 받았을 때 성적 (`총 {len(similar_home_team_games)}경기`)")
-            if not similar_home_team_games.empty:
-                ht_tot = len(similar_home_team_games)
-                ht_h_win = len(similar_home_team_games[similar_home_team_games['FTR'] == 'H'])
-                ht_draw = len(similar_home_team_games[similar_home_team_games['FTR'] == 'D'])
-                ht_a_win = len(similar_home_team_games[similar_home_team_games['FTR'] == 'A'])
+            with st.expander("📋 과거 유사 배당 경기 (초기 배당 vs 마감 배당 상세) 목록"):
+                similar_league_games['Score'] = similar_league_games['FTHG'].astype(int).astype(str) + " : " + similar_league_games['FTAG'].astype(int).astype(str)
+                similar_league_games['DateStr'] = similar_league_games['Date'].dt.strftime('%Y-%m-%d')
                 
-                hc1, hc2, hc3 = st.columns(3)
-                hc1.metric(f"{home_team} 승리 비율", f"{(ht_h_win/ht_tot)*100:.1f}%", f"{ht_h_win}회 승리")
-                hc2.metric("무승부 비율", f"{(ht_draw/ht_tot)*100:.1f}%", f"{ht_draw}회 무승부")
-                hc3.metric("패배 비율", f"{(ht_a_win/ht_tot)*100:.1f}%", f"{ht_a_win}회 패배")
+                show_cols = ['DateStr', 'HomeTeam', 'AwayTeam', 'B365H', 'B365A', 'Score', 'FTR']
+                renames = {'DateStr':'날짜', 'HomeTeam':'홈팀', 'AwayTeam':'원정팀', 'B365H':'초기홈배당', 'B365A':'초기원정배당', 'Score':'스코어', 'FTR':'결과'}
                 
-                with st.expander(f"📋 {home_team}의 해당 배당 과거 경기 목록 보기"):
-                    similar_home_team_games['Score'] = similar_home_team_games['FTHG'].astype(int).astype(str) + " : " + similar_home_team_games['FTAG'].astype(int).astype(str)
-                    similar_home_team_games['DateStr'] = similar_home_team_games['Date'].dt.strftime('%Y-%m-%d')
-                    st.dataframe(similar_home_team_games[['DateStr', 'Season', 'AwayTeam', 'B365H', 'B365D', 'B365A', 'Score', 'FTR']].rename(
-                        columns={'DateStr':'날짜', 'Season':'시즌', 'AwayTeam':'상대원정팀', 'B365H':'홈배당', 'B365D':'무배당', 'B365A':'원정배당', 'Score':'스코어', 'FTR':'결과'}
-                    ), use_container_width=True, hide_index=True)
-            else:
-                st.info(f"{home_team}이 홈에서 해당 배당범위[{input_h_odds - tolerance:.2f} ~ {input_h_odds + tolerance:.2f}]를 받아 경기를 치른 과거 기록이 없습니다.")
+                if has_close:
+                    show_cols.insert(4, 'B365CH')
+                    renames['B365CH'] = '마감홈배당'
+                    
+                st.dataframe(similar_league_games[show_cols].rename(columns=renames), use_container_width=True, hide_index=True)
         else:
-            st.warning("입력하신 배당 범위에 해당하는 유사 경기 데이터가 없습니다. 허용 오차 범위를 조금 늘려보세요.")
+            st.warning("입력하신 배당 범위에 해당하는 유사 경기 데이터가 없습니다.")
     else:
         st.info("이 리그 데이터에는 배당 수치가 포함되어 있지 않습니다.")
 
@@ -342,17 +316,15 @@ with tab3:
                     ), use_container_width=True, hide_index=True)
                 else:
                     st.info(f"{selected_ref} 주심이 {home_team} 또는 {away_team}의 경기를 맡은 최근 기록이 없습니다.")
-        else:
-            st.info("선택 가능한 주심 목록이 없습니다.")
     else:
         st.info("💡 라리가, 세리에A, 분데스리가 데이터에는 주심(Referee) 정보가 포함되어 있지 않습니다. (EPL 전용 기능)")
 
 # ------------------------------------------
-# Page 4: 홈 vs 원정 직관적 지표 비교
+# Page 4: 홈 vs 원정 유효슈팅 & 지표 분석
 # ------------------------------------------
 with tab4:
-    st.subheader(f"📈 {home_team} (홈 성적) vs {away_team} (원정 성적) 직관 지표 비교")
-    st.caption("복잡한 통계 대신, 홈팀의 '홈 경기 성적'과 원정팀의 '원정 경기 성적'을 1:1 직관 지표로 명확하게 보여줍니다.")
+    st.subheader(f"📈 {home_team} (홈 성적) vs {away_team} (원정 성적) 유효슈팅 및 지표 비교")
+    st.caption("홈팀의 홈 세부 지표와 원정팀의 원정 세부 지표(득점, 슈팅, 유효슈팅, 코너킥)를 1:1 대조합니다.")
     
     home_only = df[df['HomeTeam'] == home_team]
     away_only = df[df['AwayTeam'] == away_team]
@@ -379,12 +351,12 @@ with tab4:
         
         st.markdown("---")
         
-        st.markdown("##### 🎯 **2. 경기당 공격 지표 직관 비교 (슈팅 & 코너킥)**")
+        st.markdown("##### 🎯 **2. 유효슈팅 & 슈팅 & 코너킥 1:1 직관 비교**")
         
         comp_metrics = [
-            ("평균 슈팅 수", h_shots, a_shots, "개"),
-            ("평균 유효 슈팅 수", h_shots_target, a_shots_target, "개"),
-            ("평균 코너킥 획득 수", h_corners, a_corners, "개")
+            ("평균 유효 슈팅 수 (On Target)", h_shots_target, a_shots_target, "개"),
+            ("평균 전체 슈팅 수 (Total Shots)", h_shots, a_shots, "개"),
+            ("평균 코너킥 획득 수 (Corners)", h_corners, a_corners, "개")
         ]
         
         for label, h_val, a_val, unit in comp_metrics:
