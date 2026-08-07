@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import os
 
 # ==========================================
-# 1. 페이지 기본 설정 및 디자인 CSS
+# 1. 페이지 기본 설정 및 모던 다크 디자인 CSS
 # ==========================================
 st.set_page_config(
     page_title="맞춤형 축구 배팅 분석 대시보드",
@@ -14,30 +14,55 @@ st.set_page_config(
     layout="wide"
 )
 
+# 다크 테마 완성형 스타일 (테이블 및 상자 포함)
 st.markdown("""
 <style>
-    .main { background-color: #0b0f19; }
-    .stApp { background-color: #0b0f19; }
+    /* 전체 배경 */
+    .main, .stApp { background-color: #0e1726 !important; }
+    
+    /* 상단 지표 카드 (Metric) */
     .stMetric {
-        background-color: #1e293b !important;
-        border: 1px solid #334155 !important;
+        background-color: #1b2e4b !important;
+        border: 1px solid #3b3f5c !important;
         padding: 12px !important;
         border-radius: 10px !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
     }
-    .stMetric label { color: #94a3b8 !important; font-size: 0.85rem !important; }
-    .stMetric [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: bold !important; font-size: 1.4rem !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stMetric label { color: #888ea8 !important; font-size: 0.85rem !important; }
+    .stMetric [data-testid="stMetricValue"] { color: #009688 !important; font-weight: bold !important; font-size: 1.4rem !important; }
+    
+    /* 탭(Tab) 스타일 */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] {
-        background-color: #1e293b;
+        background-color: #1b2e4b;
         border-radius: 8px;
         padding: 8px 16px;
-        color: #94a3b8;
-        border: 1px solid #334155;
+        color: #888ea8;
+        border: 1px solid #3b3f5c;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #3b82f6 !important;
+        background-color: #2196f3 !important;
         color: #ffffff !important;
         font-weight: bold;
+    }
+    
+    /* 접기 상자 (Expander) 다크 테마 */
+    .streamlit-expanderHeader, [data-testid="stExpander"] {
+        background-color: #1b2e4b !important;
+        color: #bfc9d4 !important;
+        border: 1px solid #3b3f5c !important;
+        border-radius: 8px !important;
+    }
+    
+    /* 데이터프레임(표) 흰색 배경 제거 및 다크 스타일 연동 */
+    [data-testid="stDataFrame"] {
+        background-color: #1b2e4b !important;
+        border-radius: 8px !important;
+        border: 1px solid #3b3f5c !important;
+        padding: 5px;
+    }
+    .stDataFrame table {
+        color: #bfc9d4 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -82,10 +107,10 @@ def load_data():
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 배팅 분석 대시보드")
-st.caption("실시간 배당 입력 및 직관적인 지표 비교 시스템이 탑재된 대시보드입니다.")
+st.caption("눈이 편안한 올 다크(All Dark) 모드가 적용된 배팅 데이터 분석 대시보드입니다.")
 
 if not league_dict:
-    st.error("❌ `D:\\Data` 폴더에 `.xlsx` 데이터 파일이 없습니다.")
+    st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
     st.stop()
 
 # ==========================================
@@ -198,7 +223,6 @@ with tab2:
     st.subheader(f"💰 현재 경기 배당 직접 입력 및 과거 유사 배당 적중 분석")
     st.caption("이번 경기의 실제 배당을 아래에 입력해 보세요. 과거 리그 데이터에서 해당 배당을 받았을 때의 실제 적중률을 즉시 계산합니다.")
     
-    # 1. 배당 직접 입력 창
     col_in1, col_in2, col_in3, col_in4 = st.columns(4)
     with col_in1:
         input_h_odds = st.number_input(f"🏠 {home_team} 홈 승리 배당", min_value=1.01, max_value=20.0, value=1.75, step=0.05)
@@ -211,15 +235,12 @@ with tab2:
     
     st.markdown("---")
     
-    # 2. 입력 배당 기반 실시간 필터링
     if 'B365H' in df.columns:
-        # A. 리그 전체에서 입력한 홈 배당과 유사한 경기들
         similar_league_games = df[
             (df['B365H'] >= input_h_odds - tolerance) & 
             (df['B365H'] <= input_h_odds + tolerance)
         ].copy()
         
-        # B. 선택한 홈팀의 홈 경기 중 입력한 배당과 유사한 경기들
         similar_home_team_games = df[
             (df['HomeTeam'] == home_team) & 
             (df['B365H'] >= input_h_odds - tolerance) & 
@@ -228,7 +249,6 @@ with tab2:
         
         st.markdown(f"#### 📊 입력 배당 [ **{input_h_odds:.2f}** (±{tolerance:.2f}) ] 과거 적중 분석 결과")
         
-        # 리그 전체 유사 배당 성적
         if not similar_league_games.empty:
             tot_cnt = len(similar_league_games)
             h_win = len(similar_league_games[similar_league_games['FTR'] == 'H'])
@@ -247,7 +267,6 @@ with tab2:
             
             st.markdown("---")
             
-            # 특정 홈팀의 유사 배당 성적
             st.markdown(f"##### 2️⃣ **{home_team}** 이 홈에서 동일 배당 받았을 때 성적 (`총 {len(similar_home_team_games)}경기`)")
             if not similar_home_team_games.empty:
                 ht_tot = len(similar_home_team_games)
@@ -320,7 +339,7 @@ with tab3:
         st.info("심판 데이터가 제공되지 않습니다.")
 
 # ------------------------------------------
-# Page 4: 홈 vs 원정 직관적 지표 비교 (완전 개편)
+# Page 4: 홈 vs 원정 직관적 지표 비교
 # ------------------------------------------
 with tab4:
     st.subheader(f"📈 {home_team} (홈 성적) vs {away_team} (원정 성적) 직관 지표 비교")
@@ -330,7 +349,6 @@ with tab4:
     away_only = df[df['AwayTeam'] == away_team]
     
     if not home_only.empty and not away_only.empty:
-        # 주요 평균 지표 계산
         h_goals = home_only['FTHG'].mean()
         h_conceded = home_only['FTAG'].mean()
         h_shots = home_only['HS'].mean() if 'HS' in home_only.columns else 0
@@ -343,7 +361,6 @@ with tab4:
         a_shots_target = away_only['AST'].mean() if 'AST' in away_only.columns else 0
         a_corners = away_only['AC'].mean() if 'AC' in away_only.columns else 0
         
-        # 1. 득점 & 실점 비교 카드
         st.markdown("##### ⚽ **1. 경기당 평균 득점 & 실점 비교**")
         sc1, sc2, sc3, sc4 = st.columns(4)
         sc1.metric(f"🏠 {home_team} 홈 득점", f"{h_goals:.2f} 골")
@@ -353,7 +370,6 @@ with tab4:
         
         st.markdown("---")
         
-        # 2. 슈팅 & 코너킥 직관 비교
         st.markdown("##### 🎯 **2. 경기당 공격 지표 직관 비교 (슈팅 & 코너킥)**")
         
         comp_metrics = [
@@ -365,15 +381,14 @@ with tab4:
         for label, h_val, a_val, unit in comp_metrics:
             col_l, col_m, col_r = st.columns([1, 2, 1])
             with col_l:
-                st.markdown(f"<h4 style='text-align: right; color: #38bdf8;'>🏠 {home_team}<br><b>{h_val:.1f} {unit}</b></h4>", unsafe_allow_html=True)
+                st.markdown(f"<h4 style='text-align: right; color: #009688;'>🏠 {home_team}<br><b>{h_val:.1f} {unit}</b></h4>", unsafe_allow_html=True)
             with col_m:
-                st.markdown(f"<p style='text-align: center; margin-bottom: 2px; color: #94a3b8;'><b>{label}</b></p>", unsafe_allow_html=True)
-                # 시각적 게이지 바
+                st.markdown(f"<p style='text-align: center; margin-bottom: 2px; color: #888ea8;'><b>{label}</b></p>", unsafe_allow_html=True)
                 tot = h_val + a_val + 1e-5
                 h_pct = (h_val / tot) * 100
                 st.progress(int(h_pct))
             with col_r:
-                st.markdown(f"<h4 style='text-align: left; color: #a855f7;'>🚀 {away_team}<br><b>{a_val:.1f} {unit}</b></h4>", unsafe_allow_html=True)
+                st.markdown(f"<h4 style='text-align: left; color: #2196f3;'>🚀 {away_team}<br><b>{a_val:.1f} {unit}</b></h4>", unsafe_allow_html=True)
             st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
             
     else:
