@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import glob
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+from scipy.stats import poisson
 
 # ==========================================
 # 1. 페이지 기본 설정 및 모던 다크 디자인 CSS
@@ -106,7 +108,7 @@ def load_data():
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
-st.caption("전/후반 득점, 초기/마감 배당, 유효 슈팅 지표까지 정밀 분석이 가능한 종합 시스템입니다.")
+st.caption("AI 포아송 확률 계산기 및 전/후반 득점, 마감 배당까지 정밀 분석이 가능한 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -129,7 +131,73 @@ st.sidebar.markdown("---")
 st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 
 # ==========================================
-# 4. 4개 페이지 구성
+# 4. 포아송 분포 기반 AI 승률 및 언오버 계산 함수
+# ==========================================
+def calculate_poisson_probabilities(df_league, home_team, away_team):
+    avg_home_goals = df_league['FTHG'].mean()
+    avg_away_goals = df_league['FTAG'].mean()
+    
+    home_matches = df_league[df_league['HomeTeam'] == home_team]
+    away_matches = df_league[df_league['AwayTeam'] == away_team]
+    
+    if home_matches.empty or away_matches.empty:
+        return None
+    
+    home_attack = home_matches['FTHG'].mean() / avg_home_goals
+    home_defense = home_matches['FTAG'].mean() / avg_away_goals
+    
+    away_attack = away_matches['FTAG'].mean() / avg_away_goals
+    away_defense = away_matches['FTHG'].mean() / avg_home_goals
+    
+    expected_home_goals = home_attack * away_defense * avg_home_goals
+    expected_away_goals = away_attack * home_defense * avg_away_goals
+    
+    max_goals = 6
+    p_home = [poisson.pmf(i, expected_home_goals) for i in range(max_goals)]
+    p_away = [poisson.pmf(i, expected_away_goals) for i in range(max_goals)]
+    
+    matrix = np.outer(p_home, p_away)
+    
+    prob_home_win = np.sum(np.tril(matrix, -1))
+    prob_draw = np.sum(np.diag(matrix))
+    prob_away_win = np.sum(np.triu(matrix, 1))
+    
+    prob_over25 = 0.0
+    for i in range(max_goals):
+        for j in range(max_goals):
+            if i + j > 2.5:
+                prob_over25 += matrix[i, j]
+                
+    return {
+        'exp_h_goals': expected_home_goals,
+        'exp_a_goals': expected_away_goals,
+        'home_win': prob_home_win * 100,
+        'draw': prob_draw * 100,
+        'away_win': prob_away_win * 100,
+        'over25': prob_over25 * 100,
+        'under25': (1 - prob_over25) * 100,
+        'fair_home_odds': 1 / (prob_home_win + 1e-5),
+        'fair_draw_odds': 1 / (prob_draw + 1e-5),
+        'fair_away_odds': 1 / (prob_away_win + 1e-5)
+    }
+
+# AI 확률 계산 수행
+ai_result = calculate_poisson_probabilities(df, home_team, away_team)
+
+if ai_result:
+    st.markdown(f"### 🤖 **AI 데이터 예측 결과 ({home_team} vs {away_team})**")
+    
+    c_ai1, c_ai2, c_ai3, c_ai4, c_ai5 = st.columns(5)
+    c_ai1.metric(f"🏠 {home_team} 승리 확률", f"{ai_result['home_win']:.1f}%", f"적정배당 {ai_result['fair_home_odds']:.2f}")
+    c_ai2.metric("🤝 무승부 확률", f"{ai_result['draw']:.1f}%", f"적정배당 {ai_result['fair_draw_odds']:.2f}")
+    c_ai3.metric(f"🚀 {away_team} 승리 확률", f"{ai_result['away_win']:.1f}%", f"적정배당 {ai_result['fair_away_odds']:.2f}")
+    c_ai4.metric("🔥 2.5 오버 확률", f"{ai_result['over25']:.1f}%", f"예상득점 {ai_result['exp_h_goals']:.2f} : {ai_result['exp_a_goals']:.2f}")
+    c_ai5.metric("🛡️ 2.5 언더 확률", f"{ai_result['under25']:.1f}%", "포아송 수치 기준")
+
+st.markdown("---")
+
+# ==========================================
+# 5. 4개 페이지 구성
 # ==========================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "⚔️ Page 1: 맞대결 전적 & 전/후반 득점",
@@ -241,7 +309,7 @@ with tab1:
             ), use_container_width=True, hide_index=True)
 
 # ------------------------------------------
-# Page 2: 초기 vs 마감 배당 세부 분석 (수정완료)
+# Page 2: 초기 vs 마감 배당 세부 분석
 # ------------------------------------------
 with tab2:
     st.subheader(f"💰 초기 배당 vs 마감 배당(Closing Odds) 세부 분석")
@@ -297,7 +365,6 @@ with tab2:
             similar_league_games['Score'] = similar_league_games['FTHG'].astype(int).astype(str) + " : " + similar_league_games['FTAG'].astype(int).astype(str)
             similar_league_games['DateStr'] = similar_league_games['Date'].dt.strftime('%Y-%m-%d')
             
-            # 초기 배당 및 마감 배당 컬럼 세팅 (홈, 무, 원정 전체 포함)
             show_cols = ['DateStr', 'HomeTeam', 'AwayTeam', 'B365H', 'B365D', 'B365A']
             renames = {
                 'DateStr': '날짜', 'HomeTeam': '홈팀', 'AwayTeam': '원정팀',
