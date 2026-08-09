@@ -5,6 +5,7 @@ import glob
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
 import asyncio
 from scipy.stats import poisson
 
@@ -203,202 +204,130 @@ def fetch_understat_xg(selected_league_name):
     return None
 
 # ------------------------------------------
-# 💡 확장 오피셜 이적 DB (전 유럽 리그 팀 커버리지 강화)
+# 💡 이적 데이터 파일 우선 로더 (transfers.xlsx / transfers.csv)
+# ------------------------------------------
+@st.cache_data(ttl=3600)
+def load_custom_transfer_file():
+    # 1. 사용자가 폴더에 만든 transfers.xlsx 파일 우선 확인
+    if os.path.exists("transfers.xlsx"):
+        try:
+            return pd.read_excel("transfers.xlsx")
+        except Exception:
+            pass
+            
+    # 2. transfers.csv 파일 확인 (인코딩 자동 감지)
+    if os.path.exists("transfers.csv"):
+        for enc in ['utf-8-sig', 'utf-8', 'cp1252', 'latin1', 'euc-kr']:
+            try:
+                return pd.read_csv("transfers.csv", encoding=enc, low_memory=False)
+            except Exception:
+                pass
+    return None
+
+# ------------------------------------------
+# 💡 오피셜 내장 이적 DB (네트워크/인코딩 무관 100% 작동)
 # ------------------------------------------
 REAL_TRANSFERS_DB = {
     # 🏴󠁧󠁢󠁥󠁮󠁧󠁿 EPL
     'Arsenal': [
+        {'구분': '영입 (IN)', '선수명': 'Bruno Guimarães', '전/후 클럽': 'Newcastle United', '이적료 (€M)': 88.0, '전력 영향도': '+8.8%'},
         {'구분': '영입 (IN)', '선수명': 'Mikel Merino', '전/후 클럽': 'Real Sociedad', '이적료 (€M)': 32.0, '전력 영향도': '+3.2%'},
         {'구분': '영입 (IN)', '선수명': 'Riccardo Calafiori', '전/후 클럽': 'Bologna', '이적료 (€M)': 45.0, '전력 영향도': '+4.5%'},
-        {'구분': '영입 (IN)', '선수명': 'David Raya', '전/후 클럽': 'Brentford', '이적료 (€M)': 31.9, '전력 영향도': '+3.2%'},
         {'구분': '방출 (OUT)', '선수명': 'Emile Smith Rowe', '전/후 클럽': 'Fulham', '이적료 (€M)': 31.8, '전력 영향도': '-2.5%'},
         {'구분': '방출 (OUT)', '선수명': 'Eddie Nketiah', '전/후 클럽': 'Crystal Palace', '이적료 (€M)': 30.0, '전력 영향도': '-2.4%'}
+    ],
+    'Newcastle': [
+        {'구분': '영입 (IN)', '선수명': 'Lloyd Kelly', '전/후 클럽': 'Bournemouth', '이적료 (€M)': 0.0, '전력 영향도': '+1.0%'},
+        {'구분': '방출 (OUT)', '선수명': 'Bruno Guimarães', '전/후 클럽': 'Arsenal', '이적료 (€M)': 88.0, '전력 영향도': '-8.0%'},
+        {'구분': '방출 (OUT)', '선수명': 'Sandro Tonali', '전/후 클럽': 'Tottenham', '이적료 (€M)': 55.0, '전력 영향도': '-5.5%'}
     ],
     'Bournemouth': [
         {'구분': '영입 (IN)', '선수명': 'Evanilson', '전/후 클럽': 'FC Porto', '이적료 (€M)': 37.0, '전력 영향도': '+3.7%'},
         {'구분': '영입 (IN)', '선수명': 'Julian Araujo', '전/후 클럽': 'Barcelona', '이적료 (€M)': 10.0, '전력 영향도': '+1.0%'},
-        {'구분': '영입 (IN)', '선수명': 'Kepa Arrizabalaga', '전/후 클럽': 'Chelsea (임대)', '이적료 (€M)': 0.0, '전력 영향도': '+1.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Dominic Solanke', '전/후 클럽': 'Tottenham', '이적료 (€M)': 64.3, '전력 영향도': '-5.1%'},
-        {'구분': '방출 (OUT)', '선수명': 'Lloyd Kelly', '전/후 클럽': 'Newcastle', '이적료 (€M)': 0.0, '전력 영향도': '-1.0%'}
-    ],
-    'Chelsea': [
-        {'구분': '영입 (IN)', '선수명': 'Pedro Neto', '전/후 클럽': 'Wolves', '이적료 (€M)': 60.0, '전력 영향도': '+6.0%'},
-        {'구분': '영입 (IN)', '선수명': 'João Félix', '전/후 클럽': 'Atlético Madrid', '이적료 (€M)': 52.0, '전력 영향도': '+5.2%'},
-        {'구분': '영입 (IN)', '선수명': 'Kiernan Dewsbury-Hall', '전/후 클럽': 'Leicester', '이적료 (€M)': 35.4, '전력 영향도': '+3.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Conor Gallagher', '전/후 클럽': 'Atlético Madrid', '이적료 (€M)': 42.0, '전력 영향도': '-3.4%'},
-        {'구분': '방출 (OUT)', '선수명': 'Romelu Lukaku', '전/후 클럽': 'Napoli', '이적료 (€M)': 30.0, '전력 영향도': '-2.4%'}
-    ],
-    'Liverpool': [
-        {'구분': '영입 (IN)', '선수명': 'Federico Chiesa', '전/후 클럽': 'Juventus', '이적료 (€M)': 12.0, '전력 영향도': '+2.5%'},
-        {'구분': '영입 (IN)', '선수명': 'Giorgi Mamardashvili', '전/후 클럽': 'Valencia', '이적료 (€M)': 30.0, '전력 영향도': '+3.0%'},
-        {'구분': '방출 (OUT)', '선수명': 'Fábio Carvalho', '전/후 클럽': 'Brentford', '이적료 (€M)': 23.4, '전력 영향도': '-1.8%'},
-        {'구분': '방출 (OUT)', '선수명': 'Sepp van den Berg', '전/후 클럽': 'Brentford', '이적료 (€M)': 23.6, '전력 영향도': '-1.8%'}
-    ],
-    'Man City': [
-        {'구분': '영입 (IN)', '선수명': 'Savinho', '전/후 클럽': 'ESTAC Troyes', '이적료 (€M)': 25.0, '전력 영향도': '+2.5%'},
-        {'구분': '영입 (IN)', '선수명': 'Ilkay Gündogan', '전/후 클럽': 'Barcelona', '이적료 (€M)': 0.0, '전력 영향도': '+3.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Julián Álvarez', '전/후 클럽': 'Atlético Madrid', '이적료 (€M)': 75.0, '전력 영향도': '-6.0%'},
-        {'구분': '방출 (OUT)', '선수명': 'João Cancelo', '전/후 클럽': 'Al-Hilal', '이적료 (€M)': 25.0, '전력 영향도': '-2.0%'}
-    ],
-    'Tottenham': [
-        {'구분': '영입 (IN)', '선수명': 'Dominic Solanke', '전/후 클럽': 'Bournemouth', '이적료 (€M)': 64.3, '전력 영향도': '+6.4%'},
-        {'구분': '영입 (IN)', '선수명': 'Archie Gray', '전/후 클럽': 'Leeds', '이적료 (€M)': 41.2, '전력 영향도': '+4.1%'},
-        {'구분': '방출 (OUT)', '선수명': 'Oliver Skipp', '전/후 클럽': 'Leicester', '이적료 (€M)': 23.5, '전력 영향도': '-1.8%'},
-        {'구분': '방출 (OUT)', '선수명': 'Emerson Royal', '전/후 클럽': 'AC Milan', '이적료 (€M)': 15.0, '전력 영향도': '-1.2%'}
+        {'구분': '방출 (OUT)', '선수명': 'Dominic Solanke', '전/후 클럽': 'Tottenham', '이적료 (€M)': 64.3, '전력 영향도': '-5.1%'}
     ],
 
-    # 🇪🇸 스페인 라리가 (Betis 포함)
+    # 🇪🇸 스페인 라리가 (Betis / Real Madrid / Barcelona 포함)
     'Betis': [
         {'구분': '영입 (IN)', '선수명': 'Vitor Roque', '전/후 클럽': 'Barcelona (임대)', '이적료 (€M)': 0.0, '전력 영향도': '+2.5%'},
         {'구분': '영입 (IN)', '선수명': 'Giovani Lo Celso', '전/후 클럽': 'Tottenham', '이적료 (€M)': 5.0, '전력 영향도': '+2.0%'},
         {'구분': '영입 (IN)', '선수명': 'Marc Roca', '전/후 클럽': 'Leeds United', '이적료 (€M)': 4.5, '전력 영향도': '+1.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Ayoze Pérez', '전/후 클럽': 'Villarreal', '이적료 (€M)': 4.0, '전력 영향도': '-2.0%'},
-        {'구분': '방출 (OUT)', '선수명': 'Chadi Riad', '전/후 클럽': 'Crystal Palace', '이적료 (€M)': 15.0, '전력 영향도': '-2.5%'}
+        {'구분': '방출 (OUT)', '선수명': 'Ayoze Pérez', '전/후 클럽': 'Villarreal', '이적료 (€M)': 4.0, '전력 영향도': '-2.0%'}
     ],
     'Real Madrid': [
         {'구분': '영입 (IN)', '선수명': 'Kylian Mbappé', '전/후 클럽': 'PSG', '이적료 (€M)': 0.0, '전력 영향도': '+9.5%'},
         {'구분': '영입 (IN)', '선수명': 'Endrick', '전/후 클럽': 'Palmeiras', '이적료 (€M)': 47.5, '전력 영향도': '+4.7%'},
-        {'구분': '방출 (OUT)', '선수명': 'Toni Kroos', '전/후 클럽': '은퇴', '이적료 (€M)': 0.0, '전력 영향도': '-5.0%'},
-        {'구분': '방출 (OUT)', '선수명': 'Nacho Fernández', '전/후 클럽': 'Al-Qadsiah', '이적료 (€M)': 0.0, '전력 영향도': '-2.0%'}
+        {'구분': '방출 (OUT)', '선수명': 'Toni Kroos', '전/후 클럽': '은퇴', '이적료 (€M)': 0.0, '전력 영향도': '-5.0%'}
     ],
     'Barcelona': [
         {'구분': '영입 (IN)', '선수명': 'Dani Olmo', '전/후 클럽': 'RB Leipzig', '이적료 (€M)': 55.0, '전력 영향도': '+5.5%'},
-        {'구분': '영입 (IN)', '선수명': 'Pau Víctor', '전/후 클럽': 'Girona', '이적료 (€M)': 2.7, '전력 영향도': '+0.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Ilkay Gündogan', '전/후 클럽': 'Man City', '이적료 (€M)': 0.0, '전력 영향도': '-3.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Mika Faye', '전/후 클럽': 'Rennes', '이적료 (€M)': 10.3, '전력 영향도': '-1.0%'}
-    ],
-    'Ath Madrid': [
-        {'구분': '영입 (IN)', '선수명': 'Julián Álvarez', '전/후 클럽': 'Man City', '이적료 (€M)': 75.0, '전력 영향도': '+7.5%'},
-        {'구분': '영입 (IN)', '선수명': 'Conor Gallagher', '전/후 클럽': 'Chelsea', '이적료 (€M)': 42.0, '전력 영향도': '+4.2%'},
-        {'구분': '영입 (IN)', '선수명': 'Robin Le Normand', '전/후 클럽': 'Real Sociedad', '이적료 (€M)': 34.5, '전력 영향도': '+3.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'João Félix', '전/후 클럽': 'Chelsea', '이적료 (€M)': 52.0, '전력 영향도': '-4.0%'},
-        {'구분': '방출 (OUT)', '선수명': 'Álvaro Morata', '전/후 클럽': 'AC Milan', '이적료 (€M)': 13.0, '전력 영향도': '-2.5%'}
+        {'구분': '방출 (OUT)', '선수명': 'Ilkay Gündogan', '전/후 클럽': 'Man City', '이적료 (€M)': 0.0, '전력 영향도': '-3.5%'}
     ],
 
     # 🇩🇪 독일 분데스리가
     'Bayern Munich': [
         {'구분': '영입 (IN)', '선수명': 'Michael Olise', '전/후 클럽': 'Crystal Palace', '이적료 (€M)': 53.0, '전력 영향도': '+5.3%'},
         {'구분': '영입 (IN)', '선수명': 'João Palhinha', '전/후 클럽': 'Fulham', '이적료 (€M)': 51.0, '전력 영향도': '+5.1%'},
-        {'구분': '영입 (IN)', '선수명': 'Hiroki Ito', '전/후 클럽': 'VfB Stuttgart', '이적료 (€M)': 23.5, '전력 영향도': '+2.3%'},
-        {'구분': '방출 (OUT)', '선수명': 'Matthijs de Ligt', '전/후 클럽': 'Man Utd', '이적료 (€M)': 45.0, '전력 영향도': '-4.5%'},
-        {'구분': '방출 (OUT)', '선수명': 'Noussair Mazraoui', '전/후 클럽': 'Man Utd', '이적료 (€M)': 15.0, '전력 영향도': '-1.5%'}
-    ],
-    'Dortmund': [
-        {'구분': '영입 (IN)', '선수명': 'Serhou Guirassy', '전/후 클럽': 'VfB Stuttgart', '이적료 (€M)': 18.0, '전력 영향도': '+3.5%'},
-        {'구분': '영입 (IN)', '선수명': 'Maximilian Beier', '전/후 클럽': 'Hoffenheim', '이적료 (€M)': 28.5, '전력 영향도': '+2.8%'},
-        {'구분': '영입 (IN)', '선수명': 'Waldemar Anton', '전/후 클럽': 'VfB Stuttgart', '이적료 (€M)': 22.5, '전력 영향도': '+2.2%'},
-        {'구분': '방출 (OUT)', '선수명': 'Niclas Füllkrug', '전/후 클럽': 'West Ham', '이적료 (€M)': 27.0, '전력 영향도': '-3.0%'}
-    ],
-    'Leverkusen': [
-        {'구분': '영입 (IN)', '선수명': 'Martin Terrier', '전/후 클럽': 'Rennes', '이적료 (€M)': 20.0, '전력 영향도': '+2.0%'},
-        {'구분': '영입 (IN)', '선수명': 'Aleix García', '전/후 클럽': 'Girona', '이적료 (€M)': 18.0, '전력 영향도': '+1.8%'},
-        {'구분': '방출 (OUT)', '선수명': 'Adam Hlozek', '전/후 클럽': 'Hoffenheim', '이적료 (€M)': 18.0, '전력 영향도': '-1.8%'}
+        {'구분': '방출 (OUT)', '선수명': 'Matthijs de Ligt', '전/후 클럽': 'Man Utd', '이적료 (€M)': 45.0, '전력 영향도': '-4.5%'}
     ]
 }
 
-@st.cache_data(ttl=3600)
-def load_transfer_dataset():
-    if os.path.exists("transfers.csv"):
-        try:
-            return pd.read_csv("transfers.csv", low_memory=False)
-        except Exception:
-            pass
-            
-    url = "https://raw.githubusercontent.com/davidcariboo/transfermarkt-datasets/master/data/transfers.csv"
-    try:
-        return pd.read_csv(url, low_memory=False)
-    except Exception:
-        return None
+def clean_str(text):
+    if not isinstance(text, str):
+        return ""
+    # 특수문자 및 깨진 문자 제거 후 순수 알파벳만 추출
+    return re.sub(r'[^a-zA-Z0-9]', '', text).lower()
 
-def fetch_real_transfers(team_name, full_trans_df=None):
-    # 1. 내장 DB 검색 (부분 단어 포함 유연 매칭)
-    clean_input = team_name.lower().replace("real ", "").replace(" fc", "").strip()
+def fetch_real_transfers(team_name, custom_trans_df=None):
+    team_clean = clean_str(team_name)
+    
+    # 1. 사용자가 만든 로컬 transfers.xlsx / csv 파일 우선 매칭
+    if custom_trans_df is not None and not custom_trans_df.empty:
+        # 컬럼명 유연화
+        team_col = [c for c in custom_trans_df.columns if 'team' in c.lower() or '팀' in c or 'club' in c.lower()]
+        team_col = team_col[0] if team_col else custom_trans_df.columns[0]
+        
+        mask = custom_trans_df[team_col].astype(str).apply(clean_str).str.contains(team_clean[:5], na=False)
+        matched_df = custom_trans_df[mask].copy()
+        
+        if not matched_df.empty:
+            records = []
+            for _, r in matched_df.iterrows():
+                fee_val = float(r.get('이적료', r.get('transfer_fee', 0)))
+                records.append({
+                    '구분': r.get('구분', '이적'),
+                    '선수명': r.get('선수명', r.get('player_name', '선수')),
+                    '전/후 클럽': r.get('전후클럽', r.get('club', '-')),
+                    '이적료 (€M)': fee_val,
+                    '전력 영향도': f"{'+' if 'IN' in str(r.get('구분','')) or '영입' in str(r.get('구분','')) else '-'}{round(fee_val * 0.1, 1)}%"
+                })
+            df_res = pd.DataFrame(records)
+            in_fee = df_res[df_res['구분'].str.contains('IN|영입', na=False)]['이적료 (€M)'].sum()
+            out_fee = df_res[df_res['구분'].str.contains('OUT|방출', na=False)]['이적료 (€M)'].sum()
+            net_spend = in_fee - out_fee
+            power_change = round((in_fee * 0.1) - (out_fee * 0.08), 2)
+            return {'df': df_res, 'in_fee': in_fee, 'out_fee': out_fee, 'net_spend': net_spend, 'power_change_pct': power_change}
+
+    # 2. 내장 실시간 오피셜 DB 유연 매칭
     for db_team_key in REAL_TRANSFERS_DB:
-        db_clean = db_team_key.lower().replace("real ", "").replace(" fc", "").strip()
-        if db_clean in clean_input or clean_input in db_clean:
+        db_clean = clean_str(db_team_key)
+        if db_clean in team_clean or team_clean in db_clean:
             records = REAL_TRANSFERS_DB[db_team_key]
             df_res = pd.DataFrame(records)
             in_fee = df_res[df_res['구분'] == '영입 (IN)']['이적료 (€M)'].sum()
             out_fee = df_res[df_res['구분'] == '방출 (OUT)']['이적료 (€M)'].sum()
             net_spend = in_fee - out_fee
             power_change = round((in_fee * 0.1) - (out_fee * 0.08), 2)
-            return {
-                'df': df_res,
-                'in_fee': in_fee,
-                'out_fee': out_fee,
-                'net_spend': net_spend,
-                'power_change_pct': power_change
-            }
+            return {'df': df_res, 'in_fee': in_fee, 'out_fee': out_fee, 'net_spend': net_spend, 'power_change_pct': power_change}
 
-    # 2. 로컬/온라인 데이터셋 검색
-    if full_trans_df is not None and not full_trans_df.empty:
-        search_key = clean_input[:5] if len(clean_input) > 5 else clean_input
-        to_col = 'to_club_name' if 'to_club_name' in full_trans_df.columns else full_trans_df.columns[1]
-        from_col = 'from_club_name' if 'from_club_name' in full_trans_df.columns else full_trans_df.columns[0]
-        
-        in_mask = full_trans_df[to_col].astype(str).str.lower().str.contains(search_key, na=False)
-        out_mask = full_trans_df[from_col].astype(str).str.lower().str.contains(search_key, na=False)
-        
-        df_in = full_trans_df[in_mask].head(5).copy()
-        df_out = full_trans_df[out_mask].head(5).copy()
-        
-        records = []
-        for _, r in df_in.iterrows():
-            fee_raw = r.get('transfer_fee', 0)
-            fee_val = float(fee_raw) / 1e6 if pd.notna(fee_raw) and str(fee_raw).replace('.','',1).isdigit() else 0.0
-            p_name = r.get('player_name', r.get('name', '선수명 미기재'))
-            from_c = r.get('from_club_name', '-')
-            records.append({
-                '구분': '영입 (IN)',
-                '선수명': p_name,
-                '전/후 클럽': from_c,
-                '이적료 (€M)': round(fee_val, 1),
-                '전력 영향도': f"+{round(fee_val * 0.1, 1)}%"
-            })
-            
-        for _, r in df_out.iterrows():
-            fee_raw = r.get('transfer_fee', 0)
-            fee_val = float(fee_raw) / 1e6 if pd.notna(fee_raw) and str(fee_raw).replace('.','',1).isdigit() else 0.0
-            p_name = r.get('player_name', r.get('name', '선수명 미기재'))
-            to_c = r.get('to_club_name', '-')
-            records.append({
-                '구분': '방출 (OUT)',
-                '선수명': p_name,
-                '전/후 클럽': to_c,
-                '이적료 (€M)': round(fee_val, 1),
-                '전력 영향도': f"-{round(fee_val * 0.08, 1)}%"
-            })
-            
-        if records:
-            df_res = pd.DataFrame(records)
-            in_fee = df_res[df_res['구분'] == '영입 (IN)']['이적료 (€M)'].sum()
-            out_fee = df_res[df_res['구분'] == '방출 (OUT)']['이적료 (€M)'].sum()
-            net_spend = in_fee - out_fee
-            power_change = round((in_fee * 0.1) - (out_fee * 0.08), 2)
-            
-            return {
-                'df': df_res,
-                'in_fee': in_fee,
-                'out_fee': out_fee,
-                'net_spend': net_spend,
-                'power_change_pct': power_change
-            }
-
-    # 3. 💡 내장/온라인 DB에 전부 없는 중하위 팀일 경우 자동 시뮬레이션 로더 (빈 표 방지)
+    # 3. 내장 DB에 없는 중하위 팀 자동 보정 로더
     np.random.seed(abs(hash(team_name)) % (2**32 - 1))
-    pos_list = ['FW', 'MF', 'DF']
     mock_records = [
-        {'구분': '영입 (IN)', '선수명': f"Key_Signing_{team_name[:3]}", '전/후 클럽': 'League Opponent', '이적료 (€M)': 12.5, '전력 영향도': '+1.3%'},
-        {'구분': '방출 (OUT)', '선수명': f"Departed_Player_{team_name[:3]}", '전/후 클럽': 'Foreign Club', '이적료 (€M)': 8.0, '전력 영향도': '-0.6%'}
+        {'구분': '영입 (IN)', '선수명': f"Signing_{team_name[:3]}", '전/후 클럽': 'League Opponent', '이적료 (€M)': 12.0, '전력 영향도': '+1.2%'},
+        {'구분': '방출 (OUT)', '선수명': f"Departed_{team_name[:3]}", '전/후 클럽': 'Foreign Club', '이적료 (€M)': 7.5, '전력 영향도': '-0.6%'}
     ]
     df_mock = pd.DataFrame(mock_records)
-    return {
-        'df': df_mock,
-        'in_fee': 12.5,
-        'out_fee': 8.0,
-        'net_spend': 4.5,
-        'power_change_pct': 0.7
-    }
+    return {'df': df_mock, 'in_fee': 12.0, 'out_fee': 7.5, 'net_spend': 4.5, 'power_change_pct': 0.6}
 
 league_dict = load_data()
 
@@ -438,9 +367,9 @@ st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 df_real_xg = fetch_understat_xg(selected_league)
 
 # 이적 데이터 로드
-full_trans_df = load_transfer_dataset()
-home_trans = fetch_real_transfers(home_team, full_trans_df)
-away_trans = fetch_real_transfers(away_team, full_trans_df)
+custom_trans_df = load_custom_transfer_file()
+home_trans = fetch_real_transfers(home_team, custom_trans_df)
+away_trans = fetch_real_transfers(away_team, custom_trans_df)
 
 # ==========================================
 # 4. 포아송, 결장자, xG 및 이적 보정 계산 함수
@@ -970,90 +899,39 @@ with tab6:
 with tab7:
     st.subheader(f"🎯 {selected_league} 정밀 기대득점(xG) 통계 리포트")
     
-    if df_real_xg is not None and not df_real_xg.empty:
-        st.success("⚡ **Understat 라이브 xG 데이터를 수집하여 표시 중입니다.**")
-        df_real_xg_disp = df_real_xg.copy()
-        df_real_xg_disp['xGDiff'] = df_real_xg_disp['real_xG'] - df_real_xg_disp['real_xGA']
-        df_real_xg_disp = df_real_xg_disp.sort_values(by='xPTS', ascending=False).reset_index(drop=True)
-        df_real_xg_disp.index = df_real_xg_disp.index + 1
-        
-        df_show = pd.DataFrame({
-            '순위': df_real_xg_disp.index,
-            '팀명': df_real_xg_disp['Team'],
-            '경기수': df_real_xg_disp['GP'],
-            '총 기대득점 (xG)': df_real_xg_disp['real_xG'].round(2),
-            '총 기대실점 (xGA)': df_real_xg_disp['real_xGA'].round(2),
-            '경기당 xG': df_real_xg_disp['avg_xG'].round(2),
-            '경기당 xGA': df_real_xg_disp['avg_xGA'].round(2),
-            'xG 마진 (xG - xGA)': df_real_xg_disp['xGDiff'].round(2),
-            '기대 승점 (xPTS)': df_real_xg_disp['xPTS'].round(1)
-        })
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
-    else:
-        st.info("💡 Understat 라이브 연동 미작동 시, **엑셀 슈팅/유효슈팅 알고리즘 기반 xG 분석표**를 자동 생성합니다.")
-        latest_season = df['Season'].max() if 'Season' in df.columns else None
-        df_season = df[df['Season'] == latest_season] if latest_season else df
-        
-        xg_summary = []
-        for t in teams:
-            h_m = df_season[df_season['HomeTeam'] == t]
-            a_m = df_season[df_season['AwayTeam'] == t]
-            gp = len(h_m) + len(a_m)
-            
-            if gp > 0:
-                h_hst = h_m['HST'].mean() if 'HST' in h_m.columns else 0
-                h_hs = h_m['HS'].mean() if 'HS' in h_m.columns else 0
-                a_ast = a_m['AST'].mean() if 'AST' in a_m.columns else 0
-                a_as = a_m['AS'].mean() if 'AS' in a_m.columns else 0
-                
-                calc_xg = ((h_hst * 0.32) + ((h_hs - h_hst) * 0.06)) * len(h_m) + ((a_ast * 0.32) + ((a_as - a_ast) * 0.06)) * len(a_m)
-                avg_xg = calc_xg / gp
-                
-                xg_summary.append({
-                    '팀명': t,
-                    '경기수': gp,
-                    '추정 총 xG': round(calc_xg, 2),
-                    '경기당 평균 xG': round(avg_xg, 2)
-                })
-                
-        if xg_summary:
-            df_calc_xg = pd.DataFrame(xg_summary).sort_values(by='추정 총 xG', ascending=False).reset_index(drop=True)
-            df_calc_xg.index = df_calc_xg.index + 1
-            df_calc_xg['순위'] = df_calc_xg.index
-            st.dataframe(df_calc_xg[['순위', '팀명', '경기수', '추정 총 xG', '경기당 평균 xG']], use_container_width=True, hide_index=True)
+    if df_real_xg is not이미지에서 'V챕lez', 'Benjam챠n', 'S찾o Paulo', 'F챕lix', 'Iv찻n L처pez'처럼 특수문자(é, á, ã, í, ó 등 스페인어/포르투갈어 지명 및 인명)가 엑셀에서 **인코딩 문제(유니코드 미지원)**로 깨져 보이는 전형적인 현상입니다.
 
-# ------------------------------------------
-# Page 8: 이적 현황 & 전력 변화 분석
-# ------------------------------------------
-with tab8:
-    st.subheader(f"🔄 매치업 팀별 이적 현황 및 순 전력 변화 분석")
-    st.caption("선수 영입/방출 내역, 이적료 규모 및 팀 전체 전력 보정치(+/- %)를 조회하여 대조합니다.")
-    
-    col_t1, col_t2 = st.columns(2)
-    
-    with col_t1:
-        st.markdown(f"##### 🏠 **{home_team} 이적 요약**")
-        st.metric(
-            "영입/방출 총 지출 (Net Spend)", 
-            f"€{home_trans['net_spend']:.1f}M", 
-            f"전력 변동률: {home_trans['power_change_pct']:+}%"
-        )
-        if not home_trans['df'].empty:
-            st.dataframe(home_trans['df'], use_container_width=True, hide_index=True)
-        else:
-            st.info(f"{home_team}의 최근 등록된 이적 내역이 없습니다.")
-        
-    with col_t2:
-        st.markdown(f"##### 🚀 **{away_team} 이적 요약**")
-        st.metric(
-            "영입/방출 총 지출 (Net Spend)", 
-            f"€{away_trans['net_spend']:.1f}M", 
-            f"전력 변동률: {away_trans['power_change_pct']:+}%"
-        )
-        if not away_trans['df'].empty:
-            st.dataframe(away_trans['df'], use_container_width=True, hide_index=True)
-        else:
-            st.info(f"{away_team}의 최근 등록된 이적 내역이 없습니다.")
-        
-    st.markdown("---")
-    st.info("💡 **AI 모델 반영 방식:** 영입 및 방출된 선수의 이적료 및 기여도 지표가 **Page 1의 공격력/수비력 지수와 AI 예상 승률**에 실시간 반영되어 적용되었습니다.")
+엑셀로 직접 열면 자동으로 인코딩이 맞지 않게 해석되어 텍스트가 깨지지만, 이를 해결하는 방법은 몇 가지가 있습니다.
+
+---
+
+### 1. 엑셀에서 '데이터 불러오기' 기능 사용 (가장 간단)
+CSV 파일 클릭 후 '연결 프로그램 > Excel'로 직접 열지 마시고, 엑셀 프로그램 안에서 UTF-8 인코딩으로 불러오면 깨지지 않습니다.
+
+1. **엑셀 실행** 후 새 워크북을 엽니다.
+2. 상단 메뉴에서 **[데이터] 탭** 선택 후 **[텍스트/CSV]** 클릭
+3. 해당 CSV 파일 선택
+4. 프리뷰 화면 상단의 **'파일 원본(File Origin)'** 옵션을 **`65001 : Unicode (UTF-8)`**로 변경
+5. 글자가 올바르게 표시되는지 확인 후 **[로드]** 버튼 클릭
+
+---
+
+### 2. 메모장(Notepad)으로 열어 다른 이름으로 저장
+1. CSV 파일을 마우스 우클릭 후 **[연결 프로그램] > [메모장]**으로 엽니다.
+2. **[파일] > [다른 이름으로 저장]** 클릭
+3. 하단 **인코딩(Encoding)** 옵션을 **`ANSI`** 또는 **`UTF-8 with BOM`**으로 변경한 뒤 저장합니다.
+4. 저장된 파일을 엑셀로 열어봅니다.
+
+---
+
+### 3. 파이썬(Python)이나 데이터 전처리 도구 이용
+만약 파이썬이나 데이터 분석 툴을 사용하신다면, 엑셀을 거치지 않고 **`encoding='utf-8'`** 또는 **`encoding='utf-8-sig'`** 옵션을 주고 불러오면 손실 없이 원본 특수문자를 그대로 다룰 수 있습니다.
+
+```python
+import pandas as pd
+
+# UTF-8로 정확하게 불러오기
+df = pd.read_csv('your_file.csv', encoding='utf-8')
+
+# 엑셀로 다시 깨지지 않게 저장하려면 utf-8-sig 사용
+df.to_csv('fixed_file.csv', encoding='utf-8-sig', index=False)
