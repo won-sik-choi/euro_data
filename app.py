@@ -203,7 +203,7 @@ def fetch_understat_xg(selected_league_name):
     return None
 
 # ------------------------------------------
-# 💡 오픈소스 GitHub 실제 이적 데이터 로더
+# 💡 이적 데이터셋 로더 & 팀명 표준화 개선
 # ------------------------------------------
 @st.cache_data(ttl=86400)
 def load_github_transfer_dataset():
@@ -215,19 +215,24 @@ def load_github_transfer_dataset():
         return None
 
 def fetch_real_transfers(team_name, full_trans_df=None):
+    # 주요 클럽 키워드 매칭 보정
+    clean_team = team_name.lower().replace(" FC", "").replace(" fc", "").strip()
+    
     if full_trans_df is not None and not full_trans_df.empty:
-        # 팀 명칭 부분 매칭
-        short_name = team_name[:4].lower()
-        
-        in_mask = full_trans_df['to_club_name'].str.lower().str.contains(short_name, na=False)
-        out_mask = full_trans_df['from_club_name'].str.lower().str.contains(short_name, na=False)
+        # 최근 시즌 데이터로 정렬
+        if 'transfer_season' in full_trans_df.columns:
+            full_trans_df = full_trans_df.sort_values(by='transfer_season', ascending=False)
+            
+        in_mask = full_trans_df['to_club_name'].astype(str).str.lower().str.contains(clean_team, na=False)
+        out_mask = full_trans_df['from_club_name'].astype(str).str.lower().str.contains(clean_team, na=False)
         
         df_in = full_trans_df[in_mask].head(5).copy()
         df_out = full_trans_df[out_mask].head(5).copy()
         
         records = []
         for _, r in df_in.iterrows():
-            fee_val = float(r['transfer_fee']) / 1e6 if pd.notna(r['transfer_fee']) and str(r['transfer_fee']).replace('.','',1).isdigit() else 0.0
+            fee_raw = r.get('transfer_fee', 0)
+            fee_val = float(fee_raw) / 1e6 if pd.notna(fee_raw) and str(fee_raw).replace('.','',1).isdigit() else 0.0
             records.append({
                 '구분': '영입 (IN)',
                 '선수명': r.get('player_name', '알수없음'),
@@ -237,7 +242,8 @@ def fetch_real_transfers(team_name, full_trans_df=None):
             })
             
         for _, r in df_out.iterrows():
-            fee_val = float(r['transfer_fee']) / 1e6 if pd.notna(r['transfer_fee']) and str(r['transfer_fee']).replace('.','',1).isdigit() else 0.0
+            fee_raw = r.get('transfer_fee', 0)
+            fee_val = float(fee_raw) / 1e6 if pd.notna(fee_raw) and str(fee_raw).replace('.','',1).isdigit() else 0.0
             records.append({
                 '구분': '방출 (OUT)',
                 '선수명': r.get('player_name', '알수없음'),
@@ -261,7 +267,6 @@ def fetch_real_transfers(team_name, full_trans_df=None):
                 'power_change_pct': power_change
             }
             
-    # 데이터 연결 준비 중 시 기본 구조 생성
     empty_df = pd.DataFrame(columns=['구분', '선수명', '전/후 클럽', '이적료 (€M)', '전력 영향도'])
     return {
         'df': empty_df,
