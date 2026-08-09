@@ -69,7 +69,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 데이터 로드 및 전처리
+# 2. 데이터 로드 및 전처리 (22개 전 리그 매핑)
 # ==========================================
 @st.cache_data
 def load_data():
@@ -77,7 +77,6 @@ def load_data():
     if not files:
         return {}
     
-    # 22개 전체 유럽 리그 시트 매핑
     league_sheets = {
         # 🏴󠁧󠁢󠁥󠁮󠁧󠁿 잉글랜드
         'EPL (잉글랜드 1부)': 'E0',
@@ -147,7 +146,7 @@ if not league_dict:
     st.stop()
 
 # ==========================================
-# 3. 사이드바 - 리그 및 분석 대상 매치업 선택
+# 3. 사이드바 - 리그, 매치업 및 결장자 선택
 # ==========================================
 st.sidebar.header("⚙️ 매치업 선택")
 selected_league = st.sidebar.selectbox("1. 리그 선택", list(league_dict.keys()))
@@ -160,12 +159,21 @@ home_team = st.sidebar.selectbox("2. 홈 팀 선택", teams, index=0)
 away_team = st.sidebar.selectbox("3. 원정 팀 선택", [t for t in teams if t != home_team], index=min(1, len(teams)-1))
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🏥 주요 결장자(부상/징계) 설정")
+home_inj_att = st.sidebar.slider(f"🏠 {home_team} 주요 공격진 결장", 0, 3, 0, help="결장자 1명당 공격력 8% 감소")
+home_inj_def = st.sidebar.slider(f"🏠 {home_team} 주요 수비진/키퍼 결장", 0, 3, 0, help="결장자 1명당 수비 불안정성 8% 증가")
+
+st.sidebar.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+away_inj_att = st.sidebar.slider(f"🚀 {away_team} 주요 공격진 결장", 0, 3, 0, help="결장자 1명당 공격력 8% 감소")
+away_inj_def = st.sidebar.slider(f"🚀 {away_team} 주요 수비진/키퍼 결장", 0, 3, 0, help="결장자 1명당 수비 불안정성 8% 증가")
+
+st.sidebar.markdown("---")
 st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 
 # ==========================================
-# 4. 포아송 및 카드 지표 계산 함수
+# 4. 포아송, 결장자 및 정밀 xG 지표 계산 함수
 # ==========================================
-def calculate_poisson_probabilities(df_league, home_team, away_team):
+def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0, h_inj_def=0, a_inj_att=0, a_inj_def=0):
     avg_home_goals = df_league['FTHG'].mean()
     avg_away_goals = df_league['FTAG'].mean()
     
@@ -175,12 +183,32 @@ def calculate_poisson_probabilities(df_league, home_team, away_team):
     if home_matches.empty or away_matches.empty:
         return None
     
+    # 1. 기본 공격력/수비력 지수 계산 (득실 기준)
     home_attack = home_matches['FTHG'].mean() / (avg_home_goals + 1e-5)
     home_defense = home_matches['FTAG'].mean() / (avg_away_goals + 1e-5)
     
     away_attack = away_matches['FTAG'].mean() / (avg_away_goals + 1e-5)
     away_defense = away_matches['FTHG'].mean() / (avg_home_goals + 1e-5)
     
+    # 2. 🎯 슈팅 기반 고급 xG 보정 (데이터 존재 시 단순 골과 50:50 가중 반영)
+    if 'HST' in home_matches.columns and 'AST' in away_matches.columns and not home_matches['HST'].isna().all():
+        h_xg_stat = (home_matches['HST'].mean() * 0.32) + ((home_matches['HS'].mean() - home_matches['HST'].mean()) * 0.06)
+        a_xg_stat = (away_matches['AST'].mean() * 0.32) + ((away_matches['AS'].mean() - away_matches['AST'].mean()) * 0.06)
+        
+        league_h_xg = (df_league['HST'].mean() * 0.32) + ((df_league['HS'].mean() - df_league['HST'].mean()) * 0.06)
+        league_a_xg = (df_league['AST'].mean() * 0.32) + ((df_league['AS'].mean() - df_league['AST'].mean()) * 0.06)
+        
+        home_attack = (home_attack * 0.5) + ((h_xg_stat / (league_h_xg + 1e-5)) * 0.5)
+        away_attack = (away_attack * 0.5) + ((a_xg_stat / (league_a_xg + 1e-5)) * 0.5)
+
+    # 3. 🏥 결장자 가중치 반영 (인당 8% 조정)
+    home_attack = max(0.1, home_attack * (1.0 - h_inj_att * 0.08))
+    home_defense = home_defense * (1.0 + h_inj_def * 0.08)
+    
+    away_attack = max(0.1, away_attack * (1.0 - a_inj_att * 0.08))
+    away_defense = away_defense * (1.0 + a_inj_def * 0.08)
+    
+    # 기대 득점(xG) 계산
     expected_home_goals = home_attack * away_defense * avg_home_goals
     expected_away_goals = away_attack * home_defense * avg_away_goals
     
@@ -225,7 +253,7 @@ def calculate_poisson_probabilities(df_league, home_team, away_team):
         'exp_cards': exp_total_cards
     }
 
-ai_result = calculate_poisson_probabilities(df, home_team, away_team)
+ai_result = calculate_poisson_probabilities(df, home_team, away_team, home_inj_att, home_inj_def, away_inj_att, away_inj_def)
 
 # ==========================================
 # 5. 5개 페이지 구성 (Page 1 = AI 종합 예측)
@@ -239,12 +267,15 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # ------------------------------------------
-# Page 1: AI 종합 예측 & 카드 시뮬레이션 (신규 첫 페이지)
+# Page 1: AI 종합 예측 & 카드 시뮬레이션
 # ------------------------------------------
 with tab1:
     st.subheader(f"🤖 AI 종합 예측 리포트 ({home_team} vs {away_team})")
-    st.caption("포아송 분포 알고리즘과 리그 통계를 기반으로 승무패, 언오버, 기대득점 및 카드 발생 위험도를 시뮬레이션합니다.")
+    st.caption("포아송 분포, 슈팅 기반 xG 알고리즘 및 결장자 가중치를 종합 반영한 예측 결과입니다.")
     
+    if (home_inj_att + home_inj_def + away_inj_att + away_inj_def) > 0:
+        st.info(f"🏥 **결장자 설정 반영됨:** {home_team}(공격-{home_inj_att}, 수비-{home_inj_def}) / {away_team}(공격-{away_inj_att}, 수비-{away_inj_def})")
+        
     if ai_result:
         # 1. AI 승률 계산 및 적정 배당
         st.markdown("##### 🎯 **1. AI 승무패 예상 확률 및 적정 배당 (True Odds)**")
@@ -258,7 +289,7 @@ with tab1:
         st.markdown("---")
         
         # 2. 전력 지수 및 기대 득점(xG)
-        st.markdown("##### 📊 **2. 팀별 홈/원정 전력 지수 & AI 예상 기대득점 (xG)**")
+        st.markdown("##### 📊 **2. 팀별 보정 전력 지수 & AI 예상 기대득점 (xG)**")
         p1, p2, p3, p4, p5 = st.columns(5)
         p1.metric(f"🏠 {home_team} 홈 공격력", f"{ai_result['h_attack']:.2f}", "1.0 이상 = 우수")
         p2.metric(f"🏠 {home_team} 홈 수비력", f"{ai_result['h_defense']:.2f}", "1.0 이하 = 우수")
@@ -268,7 +299,7 @@ with tab1:
         
         st.markdown("---")
         
-        # 3. AI 카드(경고/퇴장) 시뮬레이션 (추가)
+        # 3. AI 카드(경고/퇴장) 시뮬레이션
         st.markdown("##### 🟨 **3. AI 매치 카드(Yellow Cards) 위험도 시뮬레이션**")
         kc1, kc2, kc3 = st.columns(3)
         kc1.metric(f"🏠 {home_team} 홈 경기당 카드 수집", f"{ai_result['h_avg_cards']:.2f} 개")
@@ -511,7 +542,7 @@ with tab4:
         else:
             st.info("선택 가능한 주심 목록이 없습니다.")
     else:
-        st.info("💡 라리가, 세리에A, 분데스리가 데이터에는 주심(Referee) 정보가 포함되어 있지 않습니다. (EPL 전용 기능)")
+        st.info("💡 이 리그 데이터에는 주심(Referee) 정보가 포함되어 있지 않습니다.")
 
 # ------------------------------------------
 # Page 5: 홈 vs 원정 유효슈팅 & 지표 분석
