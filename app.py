@@ -25,7 +25,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
+st.markdown(""" ... """, unsafe_allow_html=True)
 <style>
     /* 전체 배경 */
     .main, .stApp { background-color: #0e1726 !important; }
