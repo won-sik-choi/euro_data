@@ -25,7 +25,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown(""" ... """, unsafe_allow_html=True)
+st.markdown("""
 <style>
     /* 전체 배경 */
     .main, .stApp { background-color: #0e1726 !important; }
@@ -44,7 +44,7 @@ st.markdown(""" ... """, unsafe_allow_html=True)
     /* 2줄 레이아웃 탭 스타일 */
     .stTabs [data-baseweb="tab-list"] { 
         gap: 8px; 
-        flex-wrap: wrap !important; /* 탭이 길어지면 자동으로 2줄로 배치 */
+        flex-wrap: wrap !important;
     }
     .stTabs [data-baseweb="tab"] {
         background-color: #1b2e4b;
@@ -78,18 +78,8 @@ st.markdown(""" ... """, unsafe_allow_html=True)
         padding: 5px;
     }
     .stDataFrame table { color: #bfc9d4 !important; }
-    
-    /* AI 추천 박스 하이라이트 */
-    .recommend-box {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        border: 1px solid #00d2ff;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 15px;
-        color: #ffffff;
-    }
 </style>
-""", unsafe_unsafe_html=True)
+""", unsafe_allow_html=True)
 
 # ==========================================
 # 2. 데이터 로드 및 전처리 (22개 전 리그 매핑)
@@ -363,7 +353,7 @@ with tab1:
     st.subheader(f"🤖 AI 종합 예측 & 최적 추천 조건 리포트 ({home_team} vs {away_team})")
     
     if ai_result:
-        # 💡 [신규 추가] 가장 유리한 배팅 조건 자동 예측 로직
+        # 최적 배팅 조건 자동 예측 로직
         best_picks = []
         
         # 1) 승무패 판단
@@ -500,7 +490,7 @@ with tab3:
             mc1.metric("홈 승리 적중률", f"{(hw/tot)*100:.1f}%", f"{hw}/{tot} 경기")
             mc2.metric("무승부 발생률", f"{(dr/tot)*100:.1f}%", f"{dr}/{tot} 경기")
             mc3.metric("원정 승리 발생률", f"{(aw/tot)*100:.1f}%", f"{aw}/{tot} 경기")
-            similar_games['TotalGoals'] = similar_games['FTHG'] + similar_league_games['FTAG'] if 'TotalGoals' in similar_games else similar_games['FTHG'] + similar_games['FTAG']
+            similar_games['TotalGoals'] = similar_games['FTHG'] + similar_games['FTAG']
             mc4.metric("2.5 골 오버 비율", f"{(len(similar_games[similar_games['TotalGoals']>2.5])/tot)*100:.1f}%")
 
 # ------------------------------------------
