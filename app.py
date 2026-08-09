@@ -144,10 +144,10 @@ def load_data():
     return league_data
 
 # ------------------------------------------
-# 💡 유럽 5대 리그 실제 xG 데이터 수집 함수
+# 💡 유럽 5대 리그 실제 xG 데이터 수집 함수 (보완)
 # ------------------------------------------
 @st.cache_data(ttl=3600)
-def fetch_understat_xg(selected_league_name, season_year="2025"):
+def fetch_understat_xg(selected_league_name):
     if not HAS_UNDERSTAT:
         return None
         
@@ -162,32 +162,40 @@ def fetch_understat_xg(selected_league_name, season_year="2025"):
     if selected_league_name not in understat_map:
         return None
         
-    try:
-        league_code = understat_map[selected_league_name]
-        with UnderstatClient() as understat:
-            team_data = understat.league(league_code).get_team_data(season=season_year)
-            
-            parsed = []
-            for t_id, t_info in team_data.items():
-                history = t_info.get('history', [])
-                total_xg = sum(float(m['xG']) for m in history)
-                total_xga = sum(float(m['xGA']) for m in history)
-                total_pts = sum(float(m['pts']) for m in history)
-                total_xpts = sum(float(m['xPTS']) for m in history)
-                matches_played = len(history)
+    # 시즌 2025 -> 2024 예외 처리 시도
+    for year in ["2025", "2024"]:
+        try:
+            league_code = understat_map[selected_league_name]
+            with UnderstatClient() as understat:
+                team_data = understat.league(league_code).get_team_data(season=year)
                 
-                parsed.append({
-                    'Team': t_info['title'],
-                    'GP': matches_played,
-                    'real_xG': total_xg,
-                    'real_xGA': total_xga,
-                    'avg_xG': total_xg / (matches_played + 1e-5),
-                    'avg_xGA': total_xga / (matches_played + 1e-5),
-                    'xPTS': total_xpts
-                })
-            return pd.DataFrame(parsed)
-    except Exception:
-        return None
+                if not team_data:
+                    continue
+                    
+                parsed = []
+                for t_id, t_info in team_data.items():
+                    history = t_info.get('history', [])
+                    if not history:
+                        continue
+                    total_xg = sum(float(m['xG']) for m in history)
+                    total_xga = sum(float(m['xGA']) for m in history)
+                    total_xpts = sum(float(m['xPTS']) for m in history)
+                    matches_played = len(history)
+                    
+                    parsed.append({
+                        'Team': t_info['title'],
+                        'GP': matches_played,
+                        'real_xG': total_xg,
+                        'real_xGA': total_xga,
+                        'avg_xG': total_xg / (matches_played + 1e-5),
+                        'avg_xGA': total_xga / (matches_played + 1e-5),
+                        'xPTS': total_xpts
+                    })
+                if parsed:
+                    return pd.DataFrame(parsed)
+        except Exception:
+            pass
+    return None
 
 league_dict = load_data()
 
@@ -248,7 +256,6 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
     
     # 2. 🎯 xG 보정 (5대 리그 실제 xG가 존재할 경우 최우선 반영, 없으면 슈팅 기반 xG 보정)
     if xg_df is not None and not xg_df.empty:
-        # 이름 매칭 시도
         h_row = xg_df[xg_df['Team'].str.contains(home_team[:4], case=False, na=False)]
         a_row = xg_df[xg_df['Team'].str.contains(away_team[:4], case=False, na=False)]
         
@@ -324,7 +331,7 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
 ai_result = calculate_poisson_probabilities(df, home_team, away_team, home_inj_att, home_inj_def, away_inj_att, away_inj_def, df_real_xg)
 
 # ==========================================
-# 5. 7개 페이지 구성 (Page 7 = 5대 리그 xG 전용)
+# 5. 7개 페이지 구성 (Page 7 = xG 전용 리포트)
 # ==========================================
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🤖 Page 1: AI 종합 예측 & 카드 시뮬레이션",
@@ -333,7 +340,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🟨 Page 4: 매치 심판 상세 판정 성향",
     "📈 Page 5: 홈 vs 원정 유효슈팅 & 지표",
     "📊 Page 6: 리그 실시간 순위표",
-    "🎯 Page 7: 5대 리그 실제 xG 리포트"
+    "🎯 Page 7: 팀별 정밀 xG 분석 리포트"
 ])
 
 # ------------------------------------------
@@ -741,21 +748,19 @@ with tab6:
     )
 
 # ------------------------------------------
-# Page 7: 5대 리그 실제 xG 리포트 (신규 추가)
+# Page 7: 팀별 정밀 xG 분석 리포트 (통합 보완)
 # ------------------------------------------
 with tab7:
-    st.subheader(f"🎯 {selected_league} Understat 실제 xG 통계 리포트")
+    st.subheader(f"🎯 {selected_league} 정밀 기대득점(xG) 통계 리포트")
     
+    # 1. Understat 데이터가 있을 경우
     if df_real_xg is not None and not df_real_xg.empty:
-        st.caption("Understat API로부터 라이브로 수집된 팀별 실질 기대득점(xG), 기대실점(xGA), 기대승점(xPTS) 데이터입니다.")
-        
-        # 라운드 평균 수치 정리
+        st.success("⚡ **Understat 라이브 xG 데이터를 수집하여 표시 중입니다.**")
         df_real_xg_disp = df_real_xg.copy()
         df_real_xg_disp['xGDiff'] = df_real_xg_disp['real_xG'] - df_real_xg_disp['real_xGA']
         df_real_xg_disp = df_real_xg_disp.sort_values(by='xPTS', ascending=False).reset_index(drop=True)
         df_real_xg_disp.index = df_real_xg_disp.index + 1
         
-        # 라운드별 포맷팅
         df_show = pd.DataFrame({
             '순위': df_real_xg_disp.index,
             '팀명': df_real_xg_disp['Team'],
@@ -767,7 +772,39 @@ with tab7:
             'xG 마진 (xG - xGA)': df_real_xg_disp['xGDiff'].round(2),
             '기대 승점 (xPTS)': df_real_xg_disp['xPTS'].round(1)
         })
-        
         st.dataframe(df_show, use_container_width=True, hide_index=True)
+        
+    # 2. Understat 데이터 수집 실패 시 엑셀 슈팅 기반 산출표 출력
     else:
-        st.info("💡 선택하신 리그는 Understat xG 라이브 수집 미지원 리그이거나 `understatapi` 패키지가 설치되지 않았습니다. (유럽 5대 1부 리그 전용)")
+        st.info("💡 Understat 라이브 연동 미작동 시, **엑셀 슈팅/유효슈팅 알고리즘 기반 xG 분석표**를 자동 생성합니다.")
+        latest_season = df['Season'].max() if 'Season' in df.columns else None
+        df_season = df[df['Season'] == latest_season] if latest_season else df
+        
+        xg_summary = []
+        for t in teams:
+            h_m = df_season[df_season['HomeTeam'] == t]
+            a_m = df_season[df_season['AwayTeam'] == t]
+            gp = len(h_m) + len(a_m)
+            
+            if gp > 0:
+                h_hst = h_m['HST'].mean() if 'HST' in h_m.columns else 0
+                h_hs = h_m['HS'].mean() if 'HS' in h_m.columns else 0
+                a_ast = a_m['AST'].mean() if 'AST' in a_m.columns else 0
+                a_as = a_m['AS'].mean() if 'AS' in a_m.columns else 0
+                
+                # 프록시 xG 산출 알고리즘
+                calc_xg = ((h_hst * 0.32) + ((h_hs - h_hst) * 0.06)) * len(h_m) + ((a_ast * 0.32) + ((a_as - a_ast) * 0.06)) * len(a_m)
+                avg_xg = calc_xg / gp
+                
+                xg_summary.append({
+                    '팀명': t,
+                    '경기수': gp,
+                    '추정 총 xG': round(calc_xg, 2),
+                    '경기당 평균 xG': round(avg_xg, 2)
+                })
+                
+        if xg_summary:
+            df_calc_xg = pd.DataFrame(xg_summary).sort_values(by='추정 총 xG', ascending=False).reset_index(drop=True)
+            df_calc_xg.index = df_calc_xg.index + 1
+            df_calc_xg['순위'] = df_calc_xg.index
+            st.dataframe(df_calc_xg[['순위', '팀명', '경기수', '추정 총 xG', '경기당 평균 xG']], use_container_width=True, hide_index=True)
