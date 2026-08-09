@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import glob
+import plotly.express as px
+import plotly.graph_objects as go
 import os
 import asyncio
 from scipy.stats import poisson
@@ -15,7 +17,7 @@ except ImportError:
     HAS_UNDERSTAT = False
 
 # ==========================================
-# 1. 페이지 기본 설정 및 다크 테마 CSS
+# 1. 페이지 기본 설정 및 모던 다크 디자인 CSS
 # ==========================================
 st.set_page_config(
     page_title="맞춤형 축구 배팅 분석 대시보드",
@@ -39,7 +41,7 @@ st.markdown("""
     .stMetric label { color: #888ea8 !important; font-size: 0.85rem !important; }
     .stMetric [data-testid="stMetricValue"] { color: #009688 !important; font-weight: bold !important; font-size: 1.4rem !important; }
     
-    /* 2줄 커스텀 네비게이션 라디오 버튼 다크 스타일 */
+    /* 2줄 레이아웃 탭 스타일 */
     div[data-testid="stRadio"] > div {
         flex-direction: row;
         flex-wrap: wrap;
@@ -53,7 +55,7 @@ st.markdown("""
         color: #bfc9d4 !important;
         font-weight: bold !important;
         cursor: pointer;
-        width: 23% !important; /* 4개씩 2줄 자동 배치 */
+        width: 23% !important;
         text-align: center;
         margin: 0 !important;
     }
@@ -67,14 +69,24 @@ st.markdown("""
         color: #ffffff !important;
     }
     
-    /* 데이터프레임 다크 스타일 적용 */
+    /* 접기 상자 (Expander) 다크 테마 */
+    .streamlit-expanderHeader, [data-testid="stExpander"] {
+        background-color: #1b2e4b !important;
+        color: #bfc9d4 !important;
+        border: 1px solid #3b3f5c !important;
+        border-radius: 8px !important;
+    }
+    
+    /* 데이터프레임(표) 다크 스타일 적용 */
     [data-testid="stDataFrame"] {
         background-color: #1b2e4b !important;
         border-radius: 8px !important;
         border: 1px solid #3b3f5c !important;
         padding: 5px;
     }
-    .stDataFrame table { color: #bfc9d4 !important; }
+    .stDataFrame table {
+        color: #bfc9d4 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -88,12 +100,19 @@ def load_data():
         return {}
     
     league_sheets = {
+        # 🏴󠁧󠁢󠁥󠁮󠁧󠁿 잉글랜드
         'EPL (잉글랜드 1부)': 'E0', '챔피언십 (잉글랜드 2부)': 'E1', '리그 원 (잉글랜드 3부)': 'E2', '리그 투 (잉글랜드 4부)': 'E3', '내셔널리그 (잉글랜드 5부)': 'EC',
+        # 🏴󠁧󠁢󠁳󠁣󠁴󠁿 스코틀랜드
         '스코티시 프리미어쉽 (스코틀랜드 1부)': 'SC0', '스코티시 챔피언십 (스코틀랜드 2부)': 'SC1', '스코티시 리그 1 (스코틀랜드 3부)': 'SC2', '스코티시 리그 2 (스코틀랜드 4부)': 'SC3',
+        # 🇩🇪 독일
         '분데스리가 (독일 1부)': 'D1', '분데스리가 2 (독일 2부)': 'D2',
+        # 🇪🇸 스페인
         '라리가 (스페인 1부)': 'SP1', '세군다 디비시온 (스페인 2부)': 'SP2',
+        # 🇮🇹 이탈리아
         '세리에 A (이탈리아 1부)': 'I1', '세리에 B (이탈리아 2부)': 'I2',
+        # 🇫🇷 프랑스
         '리그 앙 (프랑스 1부)': 'F1', '리그 두 (프랑스 2부)': 'F2',
+        # 🇳🇱 🇧🇪 🇵🇹 🇹🇷 🇬🇷 기타 주요 리그
         '에레디비시 (네덜란드 1부)': 'N1', '주필러 프로 리그 (벨기에 1부)': 'B1', '프리메이라리가 (포르투갈 1부)': 'P1', '쉬페르리그 (터키 1부)': 'T1', '수페르리가 엘라다 (그리스 1부)': 'G1'
     }
     
@@ -161,7 +180,7 @@ def fetch_understat_xg(selected_league_name):
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
-st.caption("AI 승률/언오버/카드/유효슈팅 종합 예측 및 경기 흐름별 베스트 배팅 조건 자동 산출 시스템입니다.")
+st.caption("AI 승률/언오버/카드 예측, 95% 환급률 반영 적정 배당 산출 및 경기 흐름 분석 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -196,7 +215,7 @@ st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 df_real_xg = fetch_understat_xg(selected_league)
 
 # ==========================================
-# 4. 포아송 및 정밀 배팅 지표 산출 알고리즘
+# 4. 포아송 및 95% 환급률 배당 계산 함수
 # ==========================================
 def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0, h_inj_def=0, a_inj_att=0, a_inj_def=0, xg_df=None):
     avg_home_goals = df_league['FTHG'].mean()
@@ -248,6 +267,7 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
     prob_away_win = np.sum(np.triu(matrix, 1))
     
     prob_over25 = sum(matrix[i, j] for i in range(max_goals) for j in range(max_goals) if i + j > 2.5)
+    prob_under25 = 1.0 - prob_over25
     
     h_cards = (home_matches['HY'].mean() if 'HY' in home_matches.columns else 0)
     a_cards = (away_matches['AY'].mean() if 'AY' in away_matches.columns else 0)
@@ -256,15 +276,26 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
     h_cor = (home_matches['HC'].mean() if 'HC' in home_matches.columns else 0)
     a_cor = (away_matches['AC'].mean() if 'AC' in away_matches.columns else 0)
     
+    # 💡 95% 환급률 반영 적정 배당 계산 (Payout Ratio = 0.95)
+    PAYOUT_RATIO = 0.95
+    fair_h_odds = PAYOUT_RATIO / (prob_home_win + 1e-5)
+    fair_d_odds = PAYOUT_RATIO / (prob_draw + 1e-5)
+    fair_a_odds = PAYOUT_RATIO / (prob_away_win + 1e-5)
+    
+    fair_over_odds = PAYOUT_RATIO / (prob_over25 + 1e-5)
+    fair_under_odds = PAYOUT_RATIO / (prob_under25 + 1e-5)
+    
     return {
         'h_attack': home_attack, 'h_defense': home_defense,
         'a_attack': away_attack, 'a_defense': away_defense,
         'exp_h_goals': expected_home_goals, 'exp_a_goals': expected_away_goals,
         'home_win': prob_home_win * 100, 'draw': prob_draw * 100, 'away_win': prob_away_win * 100,
-        'over25': prob_over25 * 100, 'under25': (1 - prob_over25) * 100,
-        'fair_home_odds': 1 / (prob_home_win + 1e-5),
-        'fair_draw_odds': 1 / (prob_draw + 1e-5),
-        'fair_away_odds': 1 / (prob_away_win + 1e-5),
+        'over25': prob_over25 * 100, 'under25': prob_under25 * 100,
+        'fair_home_odds': fair_h_odds,
+        'fair_draw_odds': fair_d_odds,
+        'fair_away_odds': fair_a_odds,
+        'fair_over_odds': fair_over_odds,
+        'fair_under_odds': fair_under_odds,
         'h_avg_cards': h_cards, 'a_avg_cards': a_cards,
         'exp_cards': h_cards + a_cards,
         'exp_sot': h_sot + a_sot,
@@ -274,7 +305,7 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
 ai_result = calculate_poisson_probabilities(df, home_team, away_team, home_inj_att, home_inj_def, away_inj_att, away_inj_def, df_real_xg)
 
 # ==========================================
-# 5. 💡 2줄 카드형 네비게이션 구조 (수정)
+# 5. 2줄 카드형 네비게이션 구조
 # ==========================================
 page_options = [
     "🤖 Page 1: AI 종합 예측 요약",
@@ -291,7 +322,7 @@ selected_page = st.radio("📄 **분석 페이지 선택 (2줄 카드 클릭):**
 st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
 # ------------------------------------------
-# Page 1: AI 종합 예측 요약
+# Page 1: AI 종합 예측 요약 (95% 환급률 적용)
 # ------------------------------------------
 if selected_page == page_options[0]:
     st.subheader(f"🤖 AI 종합 예측 리포트 ({home_team} vs {away_team})")
@@ -305,13 +336,13 @@ if selected_page == page_options[0]:
         st.info(f"🏥 **결장자 설정 반영됨:** {home_team}(공격-{home_inj_att}, 수비-{home_inj_def}) / {away_team}(공격-{away_inj_att}, 수비-{away_inj_def})")
         
     if ai_result:
-        st.markdown("##### 🎯 **1. AI 승무패 예상 확률 및 적정 배당 (True Odds)**")
+        st.markdown("##### 🎯 **1. AI 승무패 / 언오버 확률 및 적정 배당 (환급률 95% 기준)**")
         c_ai1, c_ai2, c_ai3, c_ai4, c_ai5 = st.columns(5)
         c_ai1.metric(f"🏠 {home_team} 승리 확률", f"{ai_result['home_win']:.1f}%", f"적정 {ai_result['fair_home_odds']:.2f}")
         c_ai2.metric("🤝 무승부 확률", f"{ai_result['draw']:.1f}%", f"적정 {ai_result['fair_draw_odds']:.2f}")
         c_ai3.metric(f"🚀 {away_team} 승리 확률", f"{ai_result['away_win']:.1f}%", f"적정 {ai_result['fair_away_odds']:.2f}")
-        c_ai4.metric("🔥 2.5 오버 확률", f"{ai_result['over25']:.1f}%", f"적정 {100/(ai_result['over25']+1e-5):.2f}")
-        c_ai5.metric("🛡️ 2.5 언더 확률", f"{ai_result['under25']:.1f}%", f"적정 {100/(ai_result['under25']+1e-5):.2f}")
+        c_ai4.metric("🔥 2.5 오버 확률", f"{ai_result['over25']:.1f}%", f"적정 {ai_result['fair_over_odds']:.2f}")
+        c_ai5.metric("🛡️ 2.5 언더 확률", f"{ai_result['under25']:.1f}%", f"적정 {ai_result['fair_under_odds']:.2f}")
         
         st.markdown("---")
         st.markdown("##### 📊 **2. 팀별 보정 전력 지수 & AI 예상 기대득점 (xG)**")
@@ -331,14 +362,21 @@ if selected_page == page_options[0]:
         kc3.metric("🚨 예상 총 카드 수 (Card Market)", f"약 {ai_result['exp_cards']:.1f} 개", f"위험도: {card_risk}")
 
 # ------------------------------------------
-# Page 2: 맞대결 전적 & 최근 흐름
+# Page 2: 맞대결 전적 (홈/원정 동일 조건 필터 추가)
 # ------------------------------------------
 elif selected_page == page_options[1]:
     st.subheader(f"⚔️ {home_team} vs {away_team} 맞대결 전적 & 최근 흐름")
-    h2h = df[((df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)) | 
-             ((df['HomeTeam'] == away_team) & (df['AwayTeam'] == home_team))].sort_values(by='Date', ascending=False)
     
-    st.markdown("##### 📌 **역대 맞대결 요약 (H2H)**")
+    # 💡 홈/원정 조건 필터 세렉트박스
+    h2h_mode = st.radio("🔍 맞대결 조회 조건 선택:", ["🌐 역대 전체 맞대결", f"🏠 현재 조건 동일 맞대결 ({home_team} 홈 vs {away_team} 원정만)"], horizontal=True)
+    
+    if h2h_mode.startswith("🌐"):
+        h2h = df[((df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)) | 
+                 ((df['HomeTeam'] == away_team) & (df['AwayTeam'] == home_team))].sort_values(by='Date', ascending=False)
+    else:
+        h2h = df[(df['HomeTeam'] == home_team) & (df['AwayTeam'] == away_team)].sort_values(by='Date', ascending=False)
+        
+    st.markdown("##### 📌 **맞대결 요약 (H2H)**")
     if not h2h.empty:
         home_wins = len(h2h[((h2h['HomeTeam'] == home_team) & (h2h['FTR'] == 'H')) | ((h2h['AwayTeam'] == home_team) & (h2h['FTR'] == 'A'))])
         away_wins = len(h2h[((h2h['HomeTeam'] == away_team) & (h2h['FTR'] == 'H')) | ((h2h['AwayTeam'] == away_team) & (h2h['FTR'] == 'A'))])
@@ -361,24 +399,29 @@ elif selected_page == page_options[1]:
             h2h['HT_Goals'] = h2h['HTHG'] + h2h['HTAG']
             h2h['2H_Goals'] = h2h['TotalGoals'] - h2h['HT_Goals']
             
-            fc1, fc2, fc3 = st.columns(3)
-            fc1.metric("전반전 평균 득점", f"{h2h['HT_Goals'].mean():.2f} 골")
-            fc2.metric("후반전 평균 득점", f"{h2h['2H_Goals'].mean():.2f} 골")
-            fc3.metric("전반전 0.5 오버 확률", f"{(len(h2h[h2h['HT_Goals'] > 0.5])/len(h2h))*100:.1f}%")
+            avg_ht = h2h['HT_Goals'].mean()
+            avg_2h = h2h['2H_Goals'].mean()
+            ht_over05 = (len(h2h[h2h['HT_Goals'] > 0.5]) / len(h2h)) * 100
             
-        with st.expander("📄 최근 맞대결 경기 스코어 (전반 스코어 포함) 목록 보기"):
+            fc1, fc2, fc3 = st.columns(3)
+            fc1.metric("전반전 평균 득점", f"{avg_ht:.2f} 골")
+            fc2.metric("후반전 평균 득점", f"{avg_2h:.2f} 골")
+            fc3.metric("전반전 0.5 오버 확률", f"{ht_over05:.1f}%")
+        
+        with st.expander("📄 맞대결 경기 스코어 (전반 스코어 포함) 목록 보기"):
             h2h_disp = h2h.copy()
             h2h_disp['Score'] = h2h_disp['FTHG'].astype(int).astype(str) + " : " + h2h_disp['FTAG'].astype(int).astype(str)
             if 'HTHG' in h2h_disp.columns:
                 h2h_disp['HT_Score'] = h2h_disp['HTHG'].fillna(0).astype(int).astype(str) + " : " + h2h_disp['HTAG'].fillna(0).astype(int).astype(str)
             else:
                 h2h_disp['HT_Score'] = "-"
+            
             h2h_disp['Date'] = h2h_disp['Date'].dt.strftime('%Y-%m-%d')
-            st.dataframe(h2h_disp[['Date', 'Season', 'HomeTeam', 'HT_Score', 'Score', 'AwayTeam']].rename(
-                columns={'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'HT_Score':'전반스코어', 'Score':'최종스코어', 'AwayTeam':'원정팀'}
-            ), use_container_width=True, hide_index=True)
+            disp_cols = ['Date', 'Season', 'HomeTeam', 'HT_Score', 'Score', 'AwayTeam']
+            renames = {'Date':'날짜', 'Season':'시즌', 'HomeTeam':'홈팀', 'HT_Score':'전반스코어', 'Score':'최종스코어', 'AwayTeam':'원정팀'}
+            st.dataframe(h2h_disp[disp_cols].rename(columns=renames), use_container_width=True, hide_index=True)
     else:
-        st.info("두 팀 간의 맞대결 기록이 없습니다.")
+        st.info("선택하신 조건에 해당하는 맞대결 기록이 없습니다.")
         
     st.markdown("---")
     st.markdown("##### 📈 **양 팀 최근 5경기 흐름 (Form)**")
@@ -546,18 +589,14 @@ elif selected_page == page_options[6]:
         }), use_container_width=True, hide_index=True)
 
 # ------------------------------------------
-# 💡 Page 8: AI 경기 흐름 양상 및 베스트 배팅 조건 (신설)
+# Page 8: AI 경기 흐름 & 베스트 배팅 조건
 # ------------------------------------------
 elif selected_page == page_options[7]:
     st.subheader(f"🔥 AI 경기 흐름 분석 & 베스트 배팅 조건 ({home_team} vs {away_team})")
-    st.caption("포아송 기대득점(xG), 슈팅, 코너킥, 심판 성향 및 최근 전적을 종합 분석하여 최적의 배팅 라인을 추천합니다.")
     
     if ai_result:
-        # 1. 경기 흐름 양상 분석 요약
         st.markdown("##### 🔍 **1. AI 종합 경기 흐름 양상 리포트**")
-        
         flow_desc = []
-        # 공격/수비 스타일 파악
         if ai_result['exp_h_goals'] + ai_result['exp_a_goals'] >= 3.0:
             flow_desc.append("⚽ **난타전 예상:** 양 팀의 기대 득점(xG) 합계가 높은 활발한 공격 위주의 경기 양상입니다.")
         elif ai_result['exp_h_goals'] + ai_result['exp_a_goals'] <= 2.1:
@@ -567,7 +606,6 @@ elif selected_page == page_options[7]:
             
         if ai_result['exp_cards'] >= 4.5:
             flow_desc.append("🚨 **거친 파울 매치:** 주심 판정 성향 및 양 팀 파울 페이스상 많은 경고 카드가 유발될 가능성이 높습니다.")
-            
         if ai_result['exp_sot'] >= 9.5:
             flow_desc.append("🎯 **공격적 템포:** 유효슈팅 창출 빈도가 높아 공격 전개가 매우 빠르게 진행될 경기입니다.")
             
@@ -575,34 +613,24 @@ elif selected_page == page_options[7]:
             st.info(desc)
             
         st.markdown("---")
-        
-        # 2. 베스트 배팅 추천 랭킹 (Top 1~3)
-        st.markdown("##### 🏆 **2. 가장 가치(Value) 높은 베스트 배팅 조건 Top 3**")
+        st.markdown("##### 🏆 **2. 가장 가치(Value) 높은 베스트 배팅 조건 Top 3 (95% 환급률 적용)**")
         
         ranked_picks = []
-        # 승무패
         if ai_result['home_win'] >= 60.0:
-            ranked_picks.append((ai_result['home_win'], "🔥 [승무패] " + home_team + " 홈 승리", f"승리 확률 {ai_result['home_win']:.1f}% (적정 배당 {ai_result['fair_home_odds']:.2f})"))
+            ranked_picks.append((ai_result['home_win'], "🔥 [승무패] " + home_team + " 홈 승리", f"확률 {ai_result['home_win']:.1f}% (적정 배당 {ai_result['fair_home_odds']:.2f})"))
         elif ai_result['away_win'] >= 55.0:
-            ranked_picks.append((ai_result['away_win'], "🔥 [승무패] " + away_team + " 원정 승리", f"승리 확률 {ai_result['away_win']:.1f}% (적정 배당 {ai_result['fair_away_odds']:.2f})"))
+            ranked_picks.append((ai_result['away_win'], "🔥 [승무패] " + away_team + " 원정 승리", f"확률 {ai_result['away_win']:.1f}% (적정 배당 {ai_result['fair_away_odds']:.2f})"))
             
-        # 언오버
         if ai_result['over25'] >= 58.0:
-            ranked_picks.append((ai_result['over25'], "⚽ [언오버] 2.5 오버 (Over)", f"발생 확률 {ai_result['over25']:.1f}% (예상 합계 {ai_result['exp_h_goals']+ai_result['exp_a_goals']:.2f}골)"))
+            ranked_picks.append((ai_result['over25'], "⚽ [언오버] 2.5 오버 (Over)", f"확률 {ai_result['over25']:.1f}% (적정 배당 {ai_result['fair_over_odds']:.2f})"))
         elif ai_result['under25'] >= 58.0:
-            ranked_picks.append((ai_result['under25'], "🛡️ [언오버] 2.5 언더 (Under)", f"발생 확률 {ai_result['under25']:.1f}% (예상 합계 {ai_result['exp_h_goals']+ai_result['exp_a_goals']:.2f}골)"))
+            ranked_picks.append((ai_result['under25'], "🛡️ [언오버] 2.5 언더 (Under)", f"확률 {ai_result['under25']:.1f}% (적정 배당 {ai_result['fair_under_odds']:.2f})"))
             
-        # 카드
         if ai_result['exp_cards'] >= 4.5:
             ranked_picks.append((70.0, "🟨 [카드 마켓] 오버 4.5 카드가능성", f"예상 총 카드 수 약 {ai_result['exp_cards']:.1f}개"))
-            
-        # 유효슈팅/코너
         if ai_result['exp_sot'] >= 9.5:
-            ranked_picks.append((65.0, "🎯 [유효슈팅] 오버 9.5 유효슈팅", f"양 팀 예상 합계 유효슈팅 {ai_result['exp_sot']:.1f}개"))
-        if ai_result['exp_corners'] >= 10.0:
-            ranked_picks.append((62.0, "🚩 [코너킥] 오버 9.5 코너킥", f"양 팀 예상 합계 코너킥 {ai_result['exp_corners']:.1f}개"))
+            ranked_picks.append((65.0, "🎯 [유효슈팅] 오버 9.5 유효슈팅", f"양 팀 예상 합계 {ai_result['exp_sot']:.1f}개"))
 
-        # 확률순 정렬
         ranked_picks.sort(key=lambda x: x[0], reverse=True)
         top_picks = ranked_picks[:3]
         
@@ -621,14 +649,12 @@ elif selected_page == page_options[7]:
             st.info("양 팀 전력이 팽팽하여 전반전 경기 진행을 확인한 후 라이브 배팅으로 접근하시는 것을 권장합니다.")
             
         st.markdown("---")
-        
-        # 3. 항목별 세부 예측 수치 대조
         st.markdown("##### 📊 **3. 항목별 종합 AI 예측 수치 표**")
         summary_data = {
-            '분석 항목': ['승무패 예측', '2.5 골 언오버', '예상 기대 득점 (xG)', '예상 총 카드 수', '예상 총 유효슈팅 수', '예상 총 코너킥 수'],
+            '분석 항목': ['승무패 적정 배당 (95%)', '2.5 골 언오버 적정 배당', '예상 기대 득점 (xG)', '예상 총 카드 수', '예상 총 유효슈팅 수', '예상 총 코너킥 수'],
             'AI 예상 분석 수치': [
-                f"{home_team} 승 ({ai_result['home_win']:.1f}%) / 무 ({ai_result['draw']:.1f}%) / {away_team} 승 ({ai_result['away_win']:.1f}%)",
-                f"2.5 오버 ({ai_result['over25']:.1f}%) vs 2.5 언더 ({ai_result['under25']:.1f}%)",
+                f"홈승 {ai_result['fair_home_odds']:.2f} / 무승부 {ai_result['fair_draw_odds']:.2f} / 원정승 {ai_result['fair_away_odds']:.2f}",
+                f"2.5 오버 배당 {ai_result['fair_over_odds']:.2f} / 2.5 언더 배당 {ai_result['fair_under_odds']:.2f}",
                 f"{home_team} {ai_result['exp_h_goals']:.2f} 골 : {away_team} {ai_result['exp_a_goals']:.2f} 골 (합계 {ai_result['exp_h_goals']+ai_result['exp_a_goals']:.2f}골)",
                 f"약 {ai_result['exp_cards']:.1f} 개 (홈 {ai_result['h_avg_cards']:.1f} / 원정 {ai_result['a_avg_cards']:.1f})",
                 f"약 {ai_result['exp_sot']:.1f} 개",
