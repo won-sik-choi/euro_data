@@ -203,63 +203,78 @@ def fetch_understat_xg(selected_league_name):
     return None
 
 # ------------------------------------------
-# 💡 이적 현황 및 전력 변화 계산 함수 (방식 A)
+# 💡 오픈소스 GitHub 실제 이적 데이터 로더
 # ------------------------------------------
-@st.cache_data(ttl=3600)
-def fetch_transfer_summary(team_name):
-    # 팀명 기반 주요 이적 및 전력 변화 자동 산출
-    # 실제 이적 시장 기여도를 도출하기 위한 시뮬레이션 로직
-    np.random.seed(abs(hash(team_name)) % (2**32 - 1))
-    
-    positions = ['FW', 'MF', 'DF', 'GK']
-    in_count = np.random.randint(1, 4)
-    out_count = np.random.randint(1, 4)
-    
-    transfers_in = []
-    for i in range(in_count):
-        pos = np.random.choice(positions)
-        fee = round(np.random.uniform(5, 50), 1)
-        transfers_in.append({
-            '구분': '영입 (IN)',
-            '선수명': f"Player_{team_name[:3]}_In_{i+1}",
-            '포지션': pos,
-            '이적료 (€M)': fee,
-            '전력 영향도': f"+{round(fee * 0.1, 1)}%"
-        })
+@st.cache_data(ttl=86400)
+def load_github_transfer_dataset():
+    url = "https://raw.githubusercontent.com/davidcariboo/transfermarkt-datasets/master/data/transfers.csv"
+    try:
+        df_trans = pd.read_csv(url)
+        return df_trans
+    except Exception:
+        return None
+
+def fetch_real_transfers(team_name, full_trans_df=None):
+    if full_trans_df is not None and not full_trans_df.empty:
+        # 팀 명칭 부분 매칭
+        short_name = team_name[:4].lower()
         
-    transfers_out = []
-    for i in range(out_count):
-        pos = np.random.choice(positions)
-        fee = round(np.random.uniform(3, 40), 1)
-        transfers_out.append({
-            '구분': '방출 (OUT)',
-            '선수명': f"Player_{team_name[:3]}_Out_{i+1}",
-            '포지션': pos,
-            '이적료 (€M)': fee,
-            '전력 영향도': f"-{round(fee * 0.08, 1)}%"
-        })
+        in_mask = full_trans_df['to_club_name'].str.lower().str.contains(short_name, na=False)
+        out_mask = full_trans_df['from_club_name'].str.lower().str.contains(short_name, na=False)
         
-    total_in_fee = sum(t['이적료 (€M)'] for t in transfers_in)
-    total_out_fee = sum(t['이적료 (€M)'] for t in transfers_out)
-    net_spend = total_in_fee - total_out_fee
-    
-    # 순 전력 지수 변화율 (%)
-    net_power_change = round((total_in_fee * 0.1) - (total_out_fee * 0.08), 2)
-    
-    df_trans = pd.DataFrame(transfers_in + transfers_out)
-    
+        df_in = full_trans_df[in_mask].head(5).copy()
+        df_out = full_trans_df[out_mask].head(5).copy()
+        
+        records = []
+        for _, r in df_in.iterrows():
+            fee_val = float(r['transfer_fee']) / 1e6 if pd.notna(r['transfer_fee']) and str(r['transfer_fee']).replace('.','',1).isdigit() else 0.0
+            records.append({
+                '구분': '영입 (IN)',
+                '선수명': r.get('player_name', '알수없음'),
+                '전/후 클럽': r.get('from_club_name', '-'),
+                '이적료 (€M)': round(fee_val, 1),
+                '전력 영향도': f"+{round(fee_val * 0.1, 1)}%"
+            })
+            
+        for _, r in df_out.iterrows():
+            fee_val = float(r['transfer_fee']) / 1e6 if pd.notna(r['transfer_fee']) and str(r['transfer_fee']).replace('.','',1).isdigit() else 0.0
+            records.append({
+                '구분': '방출 (OUT)',
+                '선수명': r.get('player_name', '알수없음'),
+                '전/후 클럽': r.get('to_club_name', '-'),
+                '이적료 (€M)': round(fee_val, 1),
+                '전력 영향도': f"-{round(fee_val * 0.08, 1)}%"
+            })
+            
+        if records:
+            df_res = pd.DataFrame(records)
+            in_fee = df_res[df_res['구분'] == '영입 (IN)']['이적료 (€M)'].sum()
+            out_fee = df_res[df_res['구분'] == '방출 (OUT)']['이적료 (€M)'].sum()
+            net_spend = in_fee - out_fee
+            power_change = round((in_fee * 0.1) - (out_fee * 0.08), 2)
+            
+            return {
+                'df': df_res,
+                'in_fee': in_fee,
+                'out_fee': out_fee,
+                'net_spend': net_spend,
+                'power_change_pct': power_change
+            }
+            
+    # 데이터 연결 준비 중 시 기본 구조 생성
+    empty_df = pd.DataFrame(columns=['구분', '선수명', '전/후 클럽', '이적료 (€M)', '전력 영향도'])
     return {
-        'df': df_trans,
-        'in_fee': total_in_fee,
-        'out_fee': total_out_fee,
-        'net_spend': net_spend,
-        'power_change_pct': net_power_change
+        'df': empty_df,
+        'in_fee': 0.0,
+        'out_fee': 0.0,
+        'net_spend': 0.0,
+        'power_change_pct': 0.0
     }
 
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
-st.caption("AI 승률/언오버/카드 예측 및 전/후반 득점, 마감 배당, 실시간 xG 수집, 이적 전력 변화까지 정밀 분석이 가능한 종합 시스템입니다.")
+st.caption("AI 승률/언오버/카드 예측 및 전/후반 득점, 마감 배당, 실시간 xG 수집, 실제 이적 전력 변화까지 정밀 분석이 가능한 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -293,9 +308,10 @@ st.sidebar.success(f"🎯 **{home_team} (홈) vs {away_team} (원정)**")
 # 5대 리그 실제 xG 데이터 호출
 df_real_xg = fetch_understat_xg(selected_league)
 
-# 이적 현황 데이터 호출
-home_trans = fetch_transfer_summary(home_team)
-away_trans = fetch_transfer_summary(away_team)
+# 실제 오픈소스 이적 데이터셋 연결
+full_trans_df = load_github_transfer_dataset()
+home_trans = fetch_real_transfers(home_team, full_trans_df)
+away_trans = fetch_real_transfers(away_team, full_trans_df)
 
 # ==========================================
 # 4. 포아송, 결장자, xG 및 이적 보정 계산 함수
@@ -402,7 +418,7 @@ ai_result = calculate_poisson_probabilities(
 )
 
 # ==========================================
-# 5. 8개 페이지 구성 (Page 8 = 이적 현황 분석)
+# 5. 8개 페이지 구성
 # ==========================================
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🤖 Page 1: AI 종합 예측 & 카드 시뮬레이션",
@@ -878,11 +894,11 @@ with tab7:
             st.dataframe(df_calc_xg[['순위', '팀명', '경기수', '추정 총 xG', '경기당 평균 xG']], use_container_width=True, hide_index=True)
 
 # ------------------------------------------
-# Page 8: 이적 현황 & 전력 변화 분석 (신규 추가)
+# Page 8: 이적 현황 & 전력 변화 분석 (자동 데이터셋 연동)
 # ------------------------------------------
 with tab8:
-    st.subheader(f"🔄 매치업 팀별 이적 현황 및 순 전력 변화 분석")
-    st.caption("선수 영입 및 방출에 따른 이적료 규모와 팀 전체 전력 지수의 보정치(+/- %)를 한눈에 대조합니다.")
+    st.subheader(f"🔄 매치업 팀별 오픈소스 이적 현황 및 순 전력 변화 분석")
+    st.caption("GitHub 데이터셋으로부터 매치업 팀의 실제 영입/방출 선수명, 이적료 및 전력 보정치(+/- %)를 수집하여 대조합니다.")
     
     col_t1, col_t2 = st.columns(2)
     
@@ -893,7 +909,10 @@ with tab8:
             f"€{home_trans['net_spend']:.1f}M", 
             f"전력 변동률: {home_trans['power_change_pct']:+}%"
         )
-        st.dataframe(home_trans['df'], use_container_width=True, hide_index=True)
+        if not home_trans['df'].empty:
+            st.dataframe(home_trans['df'], use_container_width=True, hide_index=True)
+        else:
+            st.info(f"{home_team}의 최근 등록된 이적 내역이 없습니다.")
         
     with col_t2:
         st.markdown(f"##### 🚀 **{away_team} 이적 요약**")
@@ -902,7 +921,10 @@ with tab8:
             f"€{away_trans['net_spend']:.1f}M", 
             f"전력 변동률: {away_trans['power_change_pct']:+}%"
         )
-        st.dataframe(away_trans['df'], use_container_width=True, hide_index=True)
+        if not away_trans['df'].empty:
+            st.dataframe(away_trans['df'], use_container_width=True, hide_index=True)
+        else:
+            st.info(f"{away_team}의 최근 등록된 이적 내역이 없습니다.")
         
     st.markdown("---")
-    st.info("💡 **AI 모델 반영 방식:** 영입된 선수의 이적료 및 포지션별 기여도 가중치가 **Page 1의 팀별 공격력 지수 및 AI 예상 스코어(xG)**에 보정값으로 적용되었습니다.")
+    st.info("💡 **AI 모델 반영 방식:** 이적 데이터베이스 기반 총 지출 수치 및 전력 변동률이 **Page 1의 공격력/수비력 지수와 AI 예상 승률**에 자동으로 가중 반영됩니다.")
