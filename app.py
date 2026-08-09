@@ -139,7 +139,7 @@ def load_data():
 league_dict = load_data()
 
 st.title("⚽ 선택 매치업 종합 배팅 분석 대시보드")
-st.caption("AI 승률/언오버/카드 예측 및 전/후반 득점, 마감 배당까지 정밀 분석이 가능한 종합 시스템입니다.")
+st.caption("AI 승률/언오버/카드 예측 및 전/후반 득점, 마감 배당, 실시간 순위표까지 정밀 분석이 가능한 종합 시스템입니다.")
 
 if not league_dict:
     st.error("❌ 폴더 내 엑셀(.xlsx) 파일이 없거나 경로를 확인해 주세요.")
@@ -256,14 +256,15 @@ def calculate_poisson_probabilities(df_league, home_team, away_team, h_inj_att=0
 ai_result = calculate_poisson_probabilities(df, home_team, away_team, home_inj_att, home_inj_def, away_inj_att, away_inj_def)
 
 # ==========================================
-# 5. 5개 페이지 구성 (Page 1 = AI 종합 예측)
+# 5. 6개 페이지 구성 (Page 6 = 리그 순위표)
 # ==========================================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🤖 Page 1: AI 종합 예측 & 카드 시뮬레이션",
     "⚔️ Page 2: 맞대결 전적 & 전/후반 득점",
     "💰 Page 3: 초기 vs 마감 배당 세부 분석",
     "🟨 Page 4: 매치 심판 상세 판정 성향",
-    "📈 Page 5: 홈 vs 원정 유효슈팅 & 지표"
+    "📈 Page 5: 홈 vs 원정 유효슈팅 & 지표",
+    "📊 Page 6: 리그 실시간 순위표"
 ])
 
 # ------------------------------------------
@@ -599,3 +600,76 @@ with tab5:
             
     else:
         st.info("해당 팀들의 홈/원정 경기 데이터가 충분하지 않습니다.")
+
+# ------------------------------------------
+# Page 6: 리그 실시간 순위표 (신규 추가)
+# ------------------------------------------
+with tab6:
+    st.subheader(f"📊 {selected_league} 실시간 리그 순위표")
+    st.caption("업로드된 경기 결과를 바탕으로 경기수, 승무패, 득/실점, 득실차, 승점을 자동 계산합니다.")
+    
+    # 최근 시즌 데이터로 한정 (최신 시즌 순위표 추출)
+    latest_season = df['Season'].max() if 'Season' in df.columns else None
+    df_season = df[df['Season'] == latest_season] if latest_season else df
+    
+    # 팀별 순위 계산 집계
+    standings = {t: {'GP': 0, 'W': 0, 'D': 0, 'L': 0, 'GF': 0, 'GA': 0, 'PTS': 0} for t in teams}
+    
+    for _, r in df_season.iterrows():
+        ht, at = r['HomeTeam'], r['AwayTeam']
+        hg, ag = r['FTHG'], r['FTAG']
+        ftr = r['FTR']
+        
+        if ht in standings and at in standings and pd.notna(hg) and pd.notna(ag):
+            # 홈팀 업데이트
+            standings[ht]['GP'] += 1
+            standings[ht]['GF'] += int(hg)
+            standings[ht]['GA'] += int(ag)
+            
+            # 원정팀 업데이트
+            standings[at]['GP'] += 1
+            standings[at]['GF'] += int(ag)
+            standings[at]['GA'] += int(hg)
+            
+            if ftr == 'H':
+                standings[ht]['W'] += 1
+                standings[ht]['PTS'] += 3
+                standings[at]['L'] += 1
+            elif ftr == 'A':
+                standings[at]['W'] += 1
+                standings[at]['PTS'] += 3
+                standings[ht]['L'] += 1
+            elif ftr == 'D':
+                standings[ht]['D'] += 1
+                standings[ht]['PTS'] += 1
+                standings[at]['D'] += 1
+                standings[at]['PTS'] += 1
+
+    df_rank = pd.DataFrame.from_dict(standings, orient='index').reset_index()
+    df_rank.rename(columns={'index': '팀명'}, inplace=True)
+    df_rank['GD'] = df_rank['GF'] - df_rank['GA']
+    
+    # 승점(PTS) -> 득실차(GD) -> 다득점(GF) 순으로 정렬
+    df_rank = df_rank.sort_values(by=['PTS', 'GD', 'GF'], ascending=[False, False, False]).reset_index(drop=True)
+    df_rank.index = df_rank.index + 1  # 1위부터 시작
+    df_rank['순위'] = df_rank.index
+    
+    # 선택된 홈/원정팀 표식 강조
+    def highlight_matchup(team_name):
+        if team_name == home_team:
+            return f"🏠 {team_name} [홈]"
+        elif team_name == away_team:
+            return f"🚀 {team_name} [원정]"
+        return team_name
+
+    df_rank['팀명'] = df_rank['팀명'].apply(highlight_matchup)
+    
+    # 컬럼 재정렬
+    df_rank_display = df_rank[['순위', '팀명', 'GP', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'PTS']]
+    df_rank_display.columns = ['순위', '팀명', '경기수(GP)', '승(W)', '무(D)', '패(L)', '득점(GF)', '실점(GA)', '득실차(GD)', '승점(PTS)']
+    
+    st.dataframe(
+        df_rank_display,
+        use_container_width=True,
+        hide_index=True
+    )
